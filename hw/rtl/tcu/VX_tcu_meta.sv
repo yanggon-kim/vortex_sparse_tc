@@ -13,6 +13,8 @@
 
 `include "VX_define.vh"
 
+`ifdef TCU_SPARSE_ENABLE
+
 /* verilator lint_off UNUSEDSIGNAL */
 
 module VX_tcu_meta import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
@@ -98,3 +100,5 @@ module VX_tcu_meta import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
 endmodule
 
 /* verilator lint_on UNUSEDSIGNAL */
+
+`endif // TCU_SPARSE_ENABLE

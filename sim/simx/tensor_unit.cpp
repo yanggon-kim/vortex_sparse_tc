@@ -463,6 +463,7 @@ static PFN_FEDP select_FEDP(uint32_t IT, uint32_t OT) {
   }
 }
 
+#ifdef TCU_SPARSE_ENABLE
 static inline void gather_B8(uint8_t mask0,
                              uint8_t mask1,
                              uint32_t bword0,
@@ -515,6 +516,7 @@ static inline void gather_B16(uint8_t mask,
   assert(out_idx == 2 && "gather_B16 must output exactly 2 elements");
   b_gathered = (uint32_t(out[0]) << 0) | (uint32_t(out[1]) << 16);
 }
+#endif // TCU_SPARSE_ENABLE
 
 class TensorUnit::Impl {
 public:
@@ -545,7 +547,9 @@ public:
       int delay = 0;
       switch (tcu_type) {
       case TcuType::WMMA:
+#ifdef TCU_SPARSE_ENABLE
       case TcuType::WMMA_SP:
+#endif
         delay = 4;
         break;
       default:
@@ -599,6 +603,7 @@ public:
     }
   }
 
+#ifdef TCU_SPARSE_ENABLE
   void wmma_sp(uint32_t wid,
                uint32_t fmt_s,
                uint32_t fmt_d,
@@ -688,6 +693,7 @@ public:
     }
 #endif
   }
+#endif // TCU_SPARSE_ENABLE
 
   const PerfStats& perf_stats() const {
     return perf_stats_;
@@ -708,9 +714,11 @@ op_string_t vortex::op_string(TcuType tcu_type, IntrTcuArgs args) {
   case TcuType::WMMA:
     return {"WMMA." + std::string(vt::fmt_string(args.fmt_s)) + "." + std::string(vt::fmt_string(args.fmt_d))
              + "." + std::to_string(args.step_m) + "." + std::to_string(args.step_n), ""};
+#ifdef TCU_SPARSE_ENABLE
   case TcuType::WMMA_SP:
     return {"WMMA_SP." + std::string(vt::fmt_string(args.fmt_s)) + "." + std::string(vt::fmt_string(args.fmt_d))
              + "." + std::to_string(args.step_m) + "." + std::to_string(args.step_n), ""};
+#endif
   default:
     std::abort();
   }
@@ -754,6 +762,7 @@ void TensorUnit::wmma(uint32_t wid,
   impl_->wmma(wid, fmt_s, fmt_d, step_m, step_n, rs1_data, rs2_data, rs3_data, rd_data, trace_data);
 }
 
+#ifdef TCU_SPARSE_ENABLE
 void TensorUnit::wmma_sp(uint32_t wid,
                          uint32_t fmt_s,
                          uint32_t fmt_d,
@@ -766,3 +775,4 @@ void TensorUnit::wmma_sp(uint32_t wid,
                          ExeTraceData* trace_data) {
   impl_->wmma_sp(wid, fmt_s, fmt_d, step_m, step_n, rs1_data, rs2_data, rs3_data, rd_data, trace_data);
 }
+#endif

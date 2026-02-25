@@ -79,9 +79,11 @@ package VX_tcu_pkg;
     localparam TCU_B_BLOCK_SIZE = TCU_TC_K * TCU_TC_N;
     localparam TCU_B_SUB_BLOCKS = TCU_BLOCK_CAP / TCU_B_BLOCK_SIZE;
 
+`ifdef TCU_SPARSE_ENABLE
     // B micro-tiling (sparse 2:4)
     localparam TCU_B_BLOCK_SIZE_SP = (TCU_TC_K * TCU_TC_N) * 2;
     localparam TCU_B_SUB_BLOCKS_SP = TCU_BLOCK_CAP / TCU_B_BLOCK_SIZE_SP;
+`endif
 
     // Register counts
     //localparam TCU_NRA = (TCU_TILE_M * TCU_TILE_K) / TCU_NT;
@@ -195,17 +197,26 @@ package VX_tcu_pkg;
                      input op_args_t op_args
     );
         case (INST_TCU_BITS'(op_type))
-            INST_TCU_WMMA,
-            INST_TCU_WMMA_SP: begin
+            INST_TCU_WMMA
+`ifdef TCU_SPARSE_ENABLE
+            , INST_TCU_WMMA_SP
+`endif
+            : begin
+`ifdef TCU_SPARSE_ENABLE
                 `TRACE(level, (INST_TCU_BITS'(op_type) == INST_TCU_WMMA_SP ? "WMMA_SP." : "WMMA."));
+`else
+                `TRACE(level, ("WMMA."));
+`endif
                 trace_fmt(level, op_args.tcu.fmt_s);
                 `TRACE(level, ("."));
                 trace_fmt(level, op_args.tcu.fmt_d);
                 `TRACE(level, (".%0d.%0d", op_args.tcu.step_m, op_args.tcu.step_n));
             end
+`ifdef TCU_SPARSE_ENABLE
             INST_TCU_META_STORE: begin
                 `TRACE(level, ("META_STORE.col%0d", op_args.tcu.fmt_d));
             end
+`endif
             default: `TRACE(level, ("?"))
         endcase
     endtask

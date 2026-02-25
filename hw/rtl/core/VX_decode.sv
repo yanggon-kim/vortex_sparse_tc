@@ -559,10 +559,18 @@ module VX_decode import VX_gpu_pkg::*; #(
                 `endif
                 `ifdef EXT_TCU_ENABLE
                     7'h02: begin
-                        if (funct3 == 3'h0 || funct3 == 3'h1) begin
+                        if (funct3 == 3'h0
+`ifdef TCU_SPARSE_ENABLE
+                            || funct3 == 3'h1
+`endif
+                        ) begin
                             ex_type = EX_TCU;
+`ifdef TCU_SPARSE_ENABLE
                             op_type = funct3[0] ? INST_OP_BITS'(INST_TCU_WMMA_SP)
                                                 : INST_OP_BITS'(INST_TCU_WMMA);
+`else
+                            op_type = INST_OP_BITS'(INST_TCU_WMMA);
+`endif
                             op_args.tcu.fmt_s  = rs1[3:0];
                             op_args.tcu.fmt_d  = rd[3:0];
                             op_args.tcu.step_m = '0;
@@ -572,7 +580,9 @@ module VX_decode import VX_gpu_pkg::*; #(
                             `USED_FREG (rs1);
                             `USED_FREG (rs2);
                             `USED_FREG (rs3);
-                        end else if (funct3 == 3'h2) begin
+                        end
+`ifdef TCU_SPARSE_ENABLE
+                        else if (funct3 == 3'h2) begin
                             ex_type = EX_TCU;
                             op_type = INST_OP_BITS'(INST_TCU_META_STORE);
                             op_args.tcu.fmt_d  = rd[3:0]; // col_idx
@@ -582,6 +592,7 @@ module VX_decode import VX_gpu_pkg::*; #(
                             op_args.tcu.step_k = '0;
                             `USED_FREG (rs1); // source float register
                         end
+`endif
                     end
                 `endif
                     default:;

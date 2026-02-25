@@ -59,6 +59,7 @@ public:
 					  std::vector<reg_data_t>& rd_data,
 					  ExeTraceData* trace_data);
 
+#ifdef TCU_SPARSE_ENABLE
 	void wmma_sp(uint32_t wid,
 				uint32_t fmt_s,
 				uint32_t fmt_d,
@@ -69,6 +70,7 @@ public:
 				const std::vector<reg_data_t>& rs3_data,
 				std::vector<reg_data_t>& rd_data,
 				ExeTraceData* trace_data);
+#endif
 
 	const PerfStats& perf_stats() const;
 
