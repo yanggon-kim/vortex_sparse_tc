@@ -83,6 +83,10 @@ package VX_tcu_pkg;
     // B micro-tiling (sparse 2:4)
     localparam TCU_B_BLOCK_SIZE_SP = (TCU_TC_K * TCU_TC_N) * 2;
     localparam TCU_B_SUB_BLOCKS_SP = TCU_BLOCK_CAP / TCU_B_BLOCK_SIZE_SP;
+
+    // Max metadata widths (sized for widest type: 4-bit elements, I_RATIO=8)
+    localparam TCU_MAX_META_ROW_WIDTH   = TCU_TC_K * 2 * TCU_MAX_ELT_RATIO;
+    localparam TCU_MAX_META_BLOCK_WIDTH = TCU_NT   * 2 * TCU_MAX_ELT_RATIO;
 `endif
 
     // Register counts

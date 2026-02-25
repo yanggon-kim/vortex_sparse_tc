@@ -158,19 +158,12 @@ module VX_tcu_core import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     wire [TCU_TC_M-1:0][TCU_TC_N-1:0][31:0] d_val;
 
 `ifdef TCU_SPARSE_ENABLE
-    // 2:4 sparsity metadata
-`ifndef TCU_ITYPE_BITS
-`define TCU_ITYPE_BITS 8
-`endif
-    localparam I_RATIO = 32 / `TCU_ITYPE_BITS;  // Elements per 32-bit word
-    localparam META_BLOCK_WIDTH = TCU_NT * 2 * I_RATIO;
-    localparam META_ROW_WIDTH   = TCU_TC_K * 2 * I_RATIO;
-    localparam ELT_W            = 32 / I_RATIO;            // bits per element (8 for int8)
-    wire [META_BLOCK_WIDTH-1:0] vld_meta_block;
+    // 2:4 sparsity metadata (sized for worst-case: int4, I_RATIO=8)
+    wire [TCU_MAX_META_BLOCK_WIDTH-1:0] vld_meta_block;
 
     VX_tcu_meta #(
         .INSTANCE_ID     (INSTANCE_ID),
-        .META_BLOCK_WIDTH(META_BLOCK_WIDTH),
+        .META_BLOCK_WIDTH(TCU_MAX_META_BLOCK_WIDTH),
         .PER_WARP_DEPTH  (PER_WARP_DEPTH)
     ) tcu_meta (
         .clk           (clk),
@@ -208,18 +201,16 @@ module VX_tcu_core import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
             /* verilator lint_off UNUSEDSIGNAL */
             wire [TCU_MAX_INPUTS-1:0] vld_mask = '1; // TODO: should connect to input source
             /* verilator lint_on UNUSEDSIGNAL */
-            wire [META_ROW_WIDTH-1:0] vld_meta_row = vld_meta_block[META_ROW_WIDTH*i +: META_ROW_WIDTH];
 
             VX_tcu_sel #(
-                .INSTANCE_ID    (INSTANCE_ID),
-                .META_ROW_WIDTH (META_ROW_WIDTH),
-                .I_RATIO        (I_RATIO),
-                .ELT_W          (ELT_W)
+                .INSTANCE_ID (INSTANCE_ID),
+                .ROW_IDX     (i)
             ) tcu_sel (
-                .b_col_1      (b_col_1),
-                .b_col_2      (b_col_2),
-                .vld_meta_row (vld_meta_row),
-                .b_col        (b_col_sparse)
+                .fmt_s          (fmt_s),
+                .b_col_1        (b_col_1),
+                .b_col_2        (b_col_2),
+                .vld_meta_block (vld_meta_block),
+                .b_col          (b_col_sparse)
             );
 
             // Select dense or sparse B column
