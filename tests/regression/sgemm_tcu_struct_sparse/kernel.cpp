@@ -33,25 +33,35 @@ void kernel_body(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t tile_row_idx = blockIdx.y;
 
   uint32_t stride_A = K / 2;
+
+  auto pMeta = pMetaBase + tile_row_idx * num_k_tiles * per_k_tile_words;
+  auto pTileA = pA + tile_row * stride_A;
+  constexpr uint32_t a_k_stride = ctx::tileK / 2;
+
   uint32_t cyc_start = csr_read(0xB00);
-  for (int i = 0; i < (int)K; i += (int)ctx::tileK) {
-    // Load metadata for this K-tile
-    uint32_t k_tile = i / ctx::tileK;
-    auto pMeta = pMetaBase + (tile_row_idx * num_k_tiles + k_tile) * per_k_tile_words;
-    ctx::load_metadata_sync(pMeta);
-
-    auto pTileA = pA + tile_row * stride_A + (i / 2);
-    ctx::load_matrix_sync<vt::row_major, true>(fragA, pTileA, stride_A);
-
-    if constexpr (vt::ITYPE::bits < 8) {
-      auto pTileB = pB + tile_col * K + i;
+  if constexpr (vt::ITYPE::bits < 8) {
+    auto pTileB = pB + tile_col * K;
+    for (int i = 0; i < (int)K; i += (int)ctx::tileK) {
+      ctx::load_metadata_sync(pMeta);
+      ctx::load_matrix_sync<vt::row_major, true>(fragA, pTileA, stride_A);
       ctx::load_matrix_sync<vt::col_major, true>(fragB, pTileB, K);
-    } else {
-      auto pTileB = pB + i * N + tile_col;
-      ctx::load_matrix_sync<vt::row_major, true>(fragB, pTileB, N);
+      ctx::mma_sync<true>(fragC, fragA, fragB, fragC);
+      pMeta += per_k_tile_words;
+      pTileA += a_k_stride;
+      pTileB += ctx::tileK;
     }
-
-    ctx::mma_sync<true>(fragC, fragA, fragB, fragC);
+  } else {
+    auto pTileB = pB + tile_col;
+    uint32_t b_k_stride = ctx::tileK * N;
+    for (int i = 0; i < (int)K; i += (int)ctx::tileK) {
+      ctx::load_metadata_sync(pMeta);
+      ctx::load_matrix_sync<vt::row_major, true>(fragA, pTileA, stride_A);
+      ctx::load_matrix_sync<vt::row_major, true>(fragB, pTileB, N);
+      ctx::mma_sync<true>(fragC, fragA, fragB, fragC);
+      pMeta += per_k_tile_words;
+      pTileA += a_k_stride;
+      pTileB += b_k_stride;
+    }
   }
   uint32_t cyc_end = csr_read(0xB00);
   auto pCycles = reinterpret_cast<uint32_t*>(arg->tcu_cycles_addr);
