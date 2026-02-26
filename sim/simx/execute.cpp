@@ -1582,7 +1582,6 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
         core_->tensor_unit()->wmma(wid, tpuArgs.fmt_s, tpuArgs.fmt_d, tpuArgs.step_m, tpuArgs.step_n, rs1_data, rs2_data, rs3_data, rd_data, trace_data.get());
         rd_write = true;
       } break;
-#ifdef TCU_SPARSE_ENABLE
       case TcuType::WMMA_SP: {
         auto trace_data = std::make_shared<TensorUnit::ExeTraceData>();
         trace->data = trace_data;
@@ -1590,7 +1589,6 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
         core_->tensor_unit()->wmma_sp(wid, tpuArgs.fmt_s, tpuArgs.fmt_d, tpuArgs.step_m, tpuArgs.step_n, rs1_data, rs2_data, rs3_data, rd_data, trace_data.get());
         rd_write = true;
       } break;
-#endif
       default:
         std::abort();
       }

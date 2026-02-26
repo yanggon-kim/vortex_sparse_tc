@@ -1191,7 +1191,6 @@ void Emulator::decode(uint32_t code, uint32_t wid, uint64_t uuid) {
           }
         }
       } break;
-#ifdef TCU_SPARSE_ENABLE
       case 1: { // WMMA_SP_SYNC
 #if (NUM_THREADS != 8) && (NUM_THREADS != 32)
         std::abort();
@@ -1244,7 +1243,6 @@ void Emulator::decode(uint32_t code, uint32_t wid, uint64_t uuid) {
         }
 #endif
       } break;
-#endif // TCU_SPARSE_ENABLE
       default:
         std::abort();
       }
