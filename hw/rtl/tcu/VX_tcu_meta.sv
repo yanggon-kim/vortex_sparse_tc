@@ -41,61 +41,81 @@ module VX_tcu_meta import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
 
     // Local parameters
     localparam HALF_K_STEPS = TCU_K_STEPS / 2;
-    localparam TOTAL_DEPTH  = `NUM_WARPS * PER_WARP_DEPTH;
-    localparam ADDRW        = `CLOG2(TOTAL_DEPTH);
     localparam ADDRW_PW     = `CLOG2(PER_WARP_DEPTH);
     localparam NUM_COLS     = META_BLOCK_WIDTH / 32;
+    localparam BANK_DEPTH   = `NUM_WARPS;
+    localparam BANK_ADDRW   = `LOG2UP(BANK_DEPTH);
 
-    // Metadata register array (per-warp partitioned)
-    reg [META_BLOCK_WIDTH-1:0] meta_mem [0:TOTAL_DEPTH-1];
-
-    // Read address: bit-concatenation of step_m and step_k (pure wire routing, zero delay)
-    // Use generate-if to avoid zero-width bit-selects when a dimension has only 1 step
+    // Bank select: same generate-if as original per_warp_raddr
     localparam M_STEP_BITS = `CLOG2(TCU_M_STEPS);
     localparam K_STEP_BITS = `CLOG2(HALF_K_STEPS);
 
-    wire [ADDRW_PW-1:0] per_warp_raddr;
+    wire [ADDRW_PW-1:0] bank_sel;
     generate
         if (K_STEP_BITS > 0 && M_STEP_BITS > 0) begin : g_addr_mk
-            assign per_warp_raddr = {step_m[M_STEP_BITS-1:0], step_k[K_STEP_BITS-1:0]};
+            assign bank_sel = {step_m[M_STEP_BITS-1:0], step_k[K_STEP_BITS-1:0]};
         end else if (K_STEP_BITS > 0) begin : g_addr_k
-            assign per_warp_raddr = step_k[K_STEP_BITS-1:0];
+            assign bank_sel = step_k[K_STEP_BITS-1:0];
         end else if (M_STEP_BITS > 0) begin : g_addr_m
-            assign per_warp_raddr = step_m[M_STEP_BITS-1:0];
+            assign bank_sel = step_m[M_STEP_BITS-1:0];
         end else begin : g_addr_zero
-            assign per_warp_raddr = '0;
+            assign bank_sel = '0;
         end
     endgenerate
-    wire [ADDRW-1:0] read_addr = {raddr_wid, per_warp_raddr};
 
-    // Combinational read
-    assign vld_meta_block = meta_mem[read_addr];
+    // Post-reset init FSM: runs NUM_WARPS cycles (one per warp)
+    reg [BANK_ADDRW:0] init_counter;
+    wire init_active = ~init_counter[BANK_ADDRW];
+    wire [BANK_ADDRW-1:0] init_addr = init_counter[BANK_ADDRW-1:0];
 
-    // Post-reset init counter: fills all warps with alternating patterns
-    reg [ADDRW:0] init_counter;
-    wire init_active = ~init_counter[ADDRW];
-    wire [ADDRW-1:0] init_addr = init_counter[ADDRW-1:0];
-    wire [META_BLOCK_WIDTH-1:0] init_data = init_addr[0] ?
-        {(META_BLOCK_WIDTH/4){4'b1010}} :
-        {(META_BLOCK_WIDTH/4){4'b0101}};
-
-    // Write logic: init or runtime meta_store
     always_ff @(posedge clk) begin
         if (reset) begin
             init_counter <= 0;
         end else if (init_active) begin
-            meta_mem[init_addr] <= init_data;
             init_counter <= init_counter + 1;
-        end else if (wr_en) begin
-            for (int row = 0; row < PER_WARP_DEPTH; row++) begin
-                for (int col = 0; col < NUM_COLS; col++) begin
-                    if (col == int'(wr_col_idx)) begin
-                        meta_mem[{wr_wid, ADDRW_PW'(row)}][col*32 +: 32] <= wr_data[row];
-                    end
-                end
-            end
         end
     end
+
+    // Column write-enable (one-hot from wr_col_idx)
+    wire [NUM_COLS-1:0] col_wren;
+    for (genvar c = 0; c < NUM_COLS; ++c) begin : g_col_wren
+        assign col_wren[c] = (c[3:0] == wr_col_idx);
+    end
+
+    // Banked VX_dp_ram instances — one bank per PER_WARP_DEPTH row
+    wire [META_BLOCK_WIDTH-1:0] bank_rdata [PER_WARP_DEPTH];
+
+    for (genvar b = 0; b < PER_WARP_DEPTH; ++b) begin : g_meta_banks
+        localparam [META_BLOCK_WIDTH-1:0] BANK_INIT =
+            (b % 2 == 0) ? {(META_BLOCK_WIDTH/4){4'b0101}}
+                         : {(META_BLOCK_WIDTH/4){4'b1010}};
+
+        wire                        bank_wr   = init_active || wr_en;
+        wire [BANK_ADDRW-1:0]      bank_wa   = init_active ? init_addr : wr_wid;
+        wire [META_BLOCK_WIDTH-1:0] bank_wd   = init_active ? BANK_INIT : {NUM_COLS{wr_data[b]}};
+        wire [NUM_COLS-1:0]         bank_wren = init_active ? {NUM_COLS{1'b1}} : col_wren;
+
+        VX_dp_ram #(
+            .DATAW    (META_BLOCK_WIDTH),
+            .SIZE     (BANK_DEPTH),
+            .WRENW    (NUM_COLS),
+            .OUT_REG  (0),
+            .RDW_MODE ("W")
+        ) meta_ram (
+            .clk   (clk),
+            .reset (reset),
+            .read  (1'b1),
+            .write (bank_wr),
+            .wren  (bank_wren),
+            .waddr (bank_wa),
+            .wdata (bank_wd),
+            .raddr (raddr_wid),
+            .rdata (bank_rdata[b])
+        );
+    end
+
+    // Read output MUX: select bank based on {step_m, step_k}
+    assign vld_meta_block = bank_rdata[bank_sel];
 
 endmodule
 
