@@ -198,10 +198,11 @@ public:
 #ifdef TCU_SPARSE_ENABLE
       if constexpr (sparse) {
         // Sparse A load: only load half the K-steps (compressed A)
+        // HW only reads registers 0..sparse_regs-1, no need to zero-fill the rest
         constexpr uint32_t sparse_k_steps = cfg::k_steps / 2;
         constexpr uint32_t sparse_regs = cfg::m_steps * sparse_k_steps;
         auto base = reinterpret_cast<const input_t*>(src) + block_row * ldm + block_col;
-        detail::unroll_for<Frag::NR>([&](auto r) {
+        detail::unroll_for<sparse_regs>([&](auto r) {
           uint32_t block_m  = r / sparse_k_steps;
           uint32_t block_k  = r % sparse_k_steps;
           uint32_t elem_row = block_m * m_stride;
@@ -209,27 +210,17 @@ public:
           if constexpr (src_layout == col_major) {
             static_assert(input_is_subbyte == false, "col_major layout is not supported for sub-byte matrix_a");
             std::swap(elem_row, elem_col);
-            if constexpr (r < sparse_regs) {
-              auto ptr = base + elem_row * ldm + elem_col;
-              if constexpr (sizeof(vreg_t) == sizeof(input_t) && !input_is_subbyte) {
-                dst.data[r] = *reinterpret_cast<const vreg_t*>(ptr);
-              } else {
-                dst.data[r] = input_acessor_t::pack_row(ptr, ldm);
-              }
+            auto ptr = base + elem_row * ldm + elem_col;
+            if constexpr (sizeof(vreg_t) == sizeof(input_t) && !input_is_subbyte) {
+              dst.data[r] = *reinterpret_cast<const vreg_t*>(ptr);
             } else {
-              uint32_t zero = 0;
-              dst.data[r] = *reinterpret_cast<const vreg_t*>(&zero);
+              dst.data[r] = input_acessor_t::pack_row(ptr, ldm);
             }
           } else {
             // row_major layout
-            if constexpr (r < sparse_regs) {
-              auto ptr = base + elem_row * ldm + elem_col;
-              assert(reinterpret_cast<uintptr_t>(ptr) % alignof(vreg_t) == 0 && "pointer must be aligned to 4 bytes");
-              dst.data[r] = *reinterpret_cast<const vreg_t *>(ptr);
-            } else {
-              uint32_t zero = 0;
-              dst.data[r] = *reinterpret_cast<const vreg_t*>(&zero);
-            }
+            auto ptr = base + elem_row * ldm + elem_col;
+            assert(reinterpret_cast<uintptr_t>(ptr) % alignof(vreg_t) == 0 && "pointer must be aligned to 4 bytes");
+            dst.data[r] = *reinterpret_cast<const vreg_t *>(ptr);
           }
         });
       } else
