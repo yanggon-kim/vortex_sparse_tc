@@ -480,11 +480,19 @@ public:
   static __attribute__((always_inline)) void load_metadata_sync(const void* meta_ptr) {
     constexpr uint32_t rtl_i_ratio = 32 / It::bits;
     constexpr uint32_t num_cols = (NT * 2 * rtl_i_ratio) / 32;
+    constexpr uint32_t PD = cfg::m_steps * (cfg::k_steps / 2);
+    constexpr uint32_t cols_per_load = NT / PD;
+    constexpr uint32_t num_loads = (num_cols + cols_per_load - 1) / cols_per_load;
     uint32_t lane_id = vx_thread_id();
     auto base = reinterpret_cast<const float*>(meta_ptr);
-    detail::unroll_for<num_cols>([&](auto col) {
-      float data = base[lane_id * num_cols + col];
-      meta_store<col>(data);
+    detail::unroll_for<num_loads>([&](auto l) {
+      float data = base[l * NT + lane_id];
+      detail::unroll_for<cols_per_load>([&](auto c) {
+        constexpr uint32_t col = l * cols_per_load + c;
+        if constexpr (col < num_cols) {
+          meta_store<col>(data);
+        }
+      });
     });
   }
 #endif // TCU_SPARSE_ENABLE

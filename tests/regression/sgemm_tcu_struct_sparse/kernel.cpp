@@ -28,7 +28,9 @@ void kernel_body(kernel_arg_t *__UNIFORM__ arg) {
   // Per-K-tile metadata reload
   constexpr uint32_t rtl_i_ratio = 32 / vt::ITYPE::bits;
   constexpr uint32_t meta_cols = (NUM_THREADS * 2 * rtl_i_ratio) / 32;
-  constexpr uint32_t per_k_tile_words = NUM_THREADS * meta_cols;
+  using kcfg = vt::wmma_config_t<NUM_THREADS>;
+  constexpr uint32_t PD = kcfg::m_steps * (kcfg::k_steps / 2);
+  constexpr uint32_t per_k_tile_words = PD * meta_cols;
   uint32_t num_k_tiles = K / ctx::tileK;
   uint32_t tile_row_idx = blockIdx.y;
 

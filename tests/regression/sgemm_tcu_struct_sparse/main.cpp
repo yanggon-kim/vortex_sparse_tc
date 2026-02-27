@@ -765,9 +765,10 @@ static void pack_metadata(std::vector<uint32_t> &h_meta,
   uint32_t num_groups_per_row = KS / 4;
   uint32_t elts_per_sparse_step = tileK_elem / half_k_steps;
 
+  constexpr uint32_t PD = cfg::m_steps * (cfg::k_steps / 2);
   uint32_t num_tile_rows = M / cfg::tileM;
   uint32_t num_k_tiles = K / cfg::tileK;
-  uint32_t per_k_tile_words = NUM_THREADS * mcols;
+  uint32_t per_k_tile_words = PD * mcols;
 
   h_meta.assign(num_tile_rows * num_k_tiles * per_k_tile_words, 0);
 
@@ -803,7 +804,7 @@ static void pack_metadata(std::vector<uint32_t> &h_meta,
                   uint32_t block_bit = i * meta_row_w + meta_bit;
                   uint32_t word_idx = block_bit / 32;
                   uint32_t bit_idx = block_bit % 32;
-                  h_meta[section_base + sram_row * mcols + word_idx] |= (1u << bit_idx);
+                  h_meta[section_base + sram_row + word_idx * PD] |= (1u << bit_idx);
                 }
               }
             }
@@ -960,7 +961,8 @@ int main(int argc, char *argv[]) {
   constexpr uint32_t meta_cols = cfg::meta_cols;
   uint32_t num_tile_rows = M / cfg::tileM;
   uint32_t num_k_tiles = K / cfg::tileK;
-  uint32_t meta_buf_entries = num_tile_rows * num_k_tiles * NUM_THREADS * meta_cols;
+  constexpr uint32_t PD = cfg::m_steps * (cfg::k_steps / 2);
+  uint32_t meta_buf_entries = num_tile_rows * num_k_tiles * PD * meta_cols;
   RT_CHECK(vx_mem_alloc(device, meta_buf_entries * sizeof(uint32_t), VX_MEM_READ, &meta_buffer));
   RT_CHECK(vx_mem_address(meta_buffer, &kernel_arg.meta_addr));
 
@@ -1091,7 +1093,8 @@ int main(int argc, char *argv[]) {
     std::vector<uint32_t> h_meta_dbg;
     pack_metadata(h_meta_dbg, masks, M, K);
     constexpr uint32_t mcols_d = cfg::meta_cols;
-    uint32_t per_k_words_d = NUM_THREADS * mcols_d;
+    constexpr uint32_t PD_d = cfg::m_steps * (cfg::k_steps / 2);
+    uint32_t per_k_words_d = PD_d * mcols_d;
     std::cout << "Metadata words (tile_row=0, k_tile=0):";
     for (uint32_t w = 0; w < per_k_words_d; ++w) {
       printf(" [%u]=0x%08x", w, h_meta_dbg[w]);
