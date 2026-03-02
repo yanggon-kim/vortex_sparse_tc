@@ -40,10 +40,9 @@ module VX_socket import VX_gpu_pkg::*; #(
     VX_dxa_bank_wr_if.slave     per_core_bank_wr_if [`SOCKET_SIZE],
 `endif
 
-`ifdef GBAR_ENABLE
     // Barrier
     VX_gbar_bus_if.master   gbar_bus_if,
-`endif
+
     // Status
     output wire             busy
 );
@@ -53,19 +52,18 @@ module VX_socket import VX_gpu_pkg::*; #(
     `SCOPE_IO_SWITCH (`SOCKET_SIZE);
 `endif
 
-`ifdef GBAR_ENABLE
     VX_gbar_bus_if per_core_gbar_bus_if[`SOCKET_SIZE]();
 
     VX_gbar_arb #(
         .NUM_REQS (`SOCKET_SIZE),
-        .OUT_BUF  ((`SOCKET_SIZE > 1) ? 2 : 0)
+        .REQ_OUT_BUF ((`SOCKET_SIZE > 1) ? 2 : 0),
+        .RSP_OUT_BUF ((`SOCKET_SIZE > 1) ? 2 : 0)
     ) gbar_arb (
         .clk        (clk),
         .reset      (reset),
         .bus_in_if  (per_core_gbar_bus_if),
         .bus_out_if (gbar_bus_if)
     );
-`endif
 
     ///////////////////////////////////////////////////////////////////////////
 
@@ -218,6 +216,7 @@ module VX_socket import VX_gpu_pkg::*; #(
         end
     end
 
+
     ///////////////////////////////////////////////////////////////////////////
 
 `ifdef EXT_DXA_ENABLE
@@ -234,9 +233,6 @@ module VX_socket import VX_gpu_pkg::*; #(
         assign dxa_req_valid_in[i] = ~reset && per_core_dxa_req_bus_if[i].req_valid;
         assign dxa_req_data_in[i] = per_core_dxa_req_bus_if[i].req_data;
         assign per_core_dxa_req_bus_if[i].req_ready = dxa_req_ready_in[i];
-        assign per_core_dxa_req_bus_if[i].rsp_valid = 1'b0;
-        assign per_core_dxa_req_bus_if[i].rsp_data  = '0;
-        `UNUSED_VAR (per_core_dxa_req_bus_if[i].rsp_ready)
     end
 
     wire [0:0] dxa_req_valid_out;
@@ -264,10 +260,6 @@ module VX_socket import VX_gpu_pkg::*; #(
     assign dxa_req_bus_if.req_valid = dxa_req_valid_out[0];
     assign dxa_req_bus_if.req_data  = dxa_req_data_out[0];
     assign dxa_req_ready_out[0] = dxa_req_bus_if.req_ready;
-
-    assign dxa_req_bus_if.rsp_ready = 1'b1;
-    `UNUSED_VAR (dxa_req_bus_if.rsp_valid)
-    `UNUSED_VAR (dxa_req_bus_if.rsp_data)
 
     // DXA SMEM bank writes: direct passthrough from cluster to per-core.
     // Each core gets its own VX_dxa_bank_wr_if from the DXA core router.
@@ -307,13 +299,11 @@ module VX_socket import VX_gpu_pkg::*; #(
             .icache_bus_if  (per_core_icache_bus_if[core_id]),
 
         `ifdef EXT_DXA_ENABLE
-            .dxa_req_bus_if     (per_core_dxa_req_bus_if[core_id]),
-            .dxa_bank_wr_if     (per_core_bank_wr_if[core_id]),
+            .dxa_req_bus_if (per_core_dxa_req_bus_if[core_id]),
+            .dxa_bank_wr_if (per_core_bank_wr_if[core_id]),
         `endif
 
-        `ifdef GBAR_ENABLE
             .gbar_bus_if    (per_core_gbar_bus_if[core_id]),
-        `endif
 
             .busy           (per_core_busy[core_id])
         );

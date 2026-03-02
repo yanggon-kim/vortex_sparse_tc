@@ -127,15 +127,45 @@ Vortex uses explicit warning management i.e. we directly resolve the warning ins
   ```
 
 ## 7. Using `ifdef
-- Preserve indent of nested code and shift pre-processor left
+-Preserve indent of nested code and shift pre-processor left by one level
+
+Base version (before):
   ```verilog
-  function automatic logic [N-1:0] to_regno(input reg_t reg);
-  `ifdef EXT_V_ENABLE
-      return {reg.rtype, reg.id};
-  `elsif EXT_F_ENABLE
-      return {reg.rtype, reg.id};
-  `else
-      return reg.id;
-  `endif
-  endfunction
+  always_comb begin
+      decode_valid = issue_valid;
+      if (is_mtype) begin
+          if (is_dp) begin
+              decode_unit = UNIT_MULDIV_DP;
+          end else begin
+              decode_unit = UNIT_MULDIV;
+          end
+      end else if (is_fp) begin
+          decode_unit = UNIT_FPU;
+      end else begin
+          decode_unit = UNIT_ALU;
+      end
+  end
+  ```
+
+Adding ifdef (after):
+  ```verilog
+  always_comb begin
+      decode_valid = issue_valid;
+      if (is_mtype) begin
+      `ifdef EXT_M_ENABLE
+          if (is_dp) begin
+              decode_unit = UNIT_MULDIV_DP;
+          end else begin
+              decode_unit = UNIT_MULDIV;
+          end
+      `else
+          decode_unit = UNIT_MULDIV;
+          `UNUSED_VAR (is_dp)
+      `endif
+      end else if (is_fp) begin
+          decode_unit = UNIT_FPU;
+      end else begin
+          decode_unit = UNIT_ALU;
+      end
+  end
   ```
