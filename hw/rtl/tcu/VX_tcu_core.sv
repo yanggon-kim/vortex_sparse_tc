@@ -78,8 +78,8 @@ module VX_tcu_core import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     wire [`LOG2UP(`NUM_WARPS)-1:0] wid = execute_if.data.header.wid;
 
     // meta_store: extract per-row write data from rs1_data lanes
-    localparam PER_WARP_DEPTH = TCU_M_STEPS * (TCU_K_STEPS / 2);
-    localparam COLS_PER_LOAD = TCU_BLOCK_CAP / PER_WARP_DEPTH;
+    localparam PER_WARP_DEPTH = TCU_META_PER_WARP_DEPTH;
+    localparam COLS_PER_LOAD  = TCU_META_COLS_PER_LOAD;
     localparam LG_CPL = $clog2(COLS_PER_LOAD);
     localparam LG_PD  = $clog2(PER_WARP_DEPTH);
     wire meta_wr_en = execute_fire && is_meta_store;
