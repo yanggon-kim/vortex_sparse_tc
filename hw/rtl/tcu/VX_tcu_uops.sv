@@ -37,6 +37,8 @@ module VX_tcu_uops import
     localparam LG_B_SB    = $clog2(TCU_B_SUB_BLOCKS);
 `ifdef TCU_SPARSE_ENABLE
     localparam LG_B_SB_SP = $clog2(TCU_B_SUB_BLOCKS_SP);
+    localparam SPARSE_SAME_CYCLES = (TCU_BLOCK_CAP == 16);
+    localparam HALF_K = TCU_K_STEPS / 2;
 
     wire is_sparse_in = (ibuf_in.op_type == INST_TCU_WMMA_SP);
     reg  is_sparse;
@@ -98,7 +100,13 @@ module VX_tcu_uops import
 
     // Output uop generation
     assign ibuf_out.uuid      = uuid;
-    assign ibuf_out.tmask     = ibuf_in.tmask;
+`ifdef TCU_SPARSE_ENABLE
+    wire sparse_k_masked = SPARSE_SAME_CYCLES && is_sparse
+                        && (k_index >= `UP(LG_K)'(HALF_K));
+    assign ibuf_out.tmask = sparse_k_masked ? '0 : ibuf_in.tmask;
+`else
+    assign ibuf_out.tmask = ibuf_in.tmask;
+`endif
     assign ibuf_out.PC        = ibuf_in.PC;
     assign ibuf_out.ex_type   = ibuf_in.ex_type;
     assign ibuf_out.op_type   = ibuf_in.op_type;
@@ -137,14 +145,15 @@ module VX_tcu_uops import
                 busy      <= 1;
 `ifdef TCU_SPARSE_ENABLE
                 is_sparse <= is_sparse_in;
-                done <= is_sparse_in ? (TCU_UOPS/2 == 1) : (TCU_UOPS == 1);
+                done <= (is_sparse_in && !SPARSE_SAME_CYCLES)
+                    ? (TCU_UOPS/2 == 1) : (TCU_UOPS == 1);
 `else
                 done <= (TCU_UOPS == 1);
 `endif
             end else if (busy && next) begin
                 counter <= counter + ((TCU_UOPS > 1) ? 1 : 0);
 `ifdef TCU_SPARSE_ENABLE
-                done <= is_sparse
+                done <= (is_sparse && !SPARSE_SAME_CYCLES)
                     ? (counter == CTR_W'((TCU_UOPS/2)-2))
                     : (counter == CTR_W'(TCU_UOPS-2));
 `else

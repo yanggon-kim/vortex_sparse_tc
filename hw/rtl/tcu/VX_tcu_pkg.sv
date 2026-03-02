@@ -59,7 +59,7 @@ package VX_tcu_pkg;
     // Block dimensions
     localparam TCU_BLOCK_CAP = TCU_NT;
     localparam TCU_LG_BLOCK_CAP = $clog2(TCU_BLOCK_CAP);
-    localparam TCU_BLOCK_EN = TCU_LG_BLOCK_CAP / 2;
+    localparam TCU_BLOCK_EN = (TCU_LG_BLOCK_CAP == 4) ? 1 : (TCU_LG_BLOCK_CAP / 2);
     localparam TCU_BLOCK_EM = TCU_LG_BLOCK_CAP - TCU_BLOCK_EN;
 
     localparam TCU_TC_M = 1 << TCU_BLOCK_EM;
