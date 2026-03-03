@@ -115,7 +115,9 @@ module VX_tcu_uops import
     assign ibuf_out.op_type   = ibuf_in.op_type;
     assign ibuf_out.op_args.tcu.fmt_s = ibuf_in.op_args.tcu.fmt_s;
 `ifdef TCU_SPARSE_ENABLE
+    /* verilator lint_off UNSIGNED */
     wire meta_use_rs2 = (counter >= CTR_W'(TCU_META_COLS_PER_LOAD));
+    /* verilator lint_on UNSIGNED */
     assign ibuf_out.op_args.tcu.fmt_d  = is_meta_store ? 4'(counter) : ibuf_in.op_args.tcu.fmt_d;
     assign ibuf_out.op_args.tcu.step_m = is_meta_store ? '0 : 4'(m_index);
     assign ibuf_out.op_args.tcu.step_n = is_meta_store ? '0 : 4'(n_index);
