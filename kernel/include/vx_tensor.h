@@ -162,8 +162,10 @@ public:
   static constexpr uint32_t sp_rtl_i_ratio = 32 / It::bits;
   static constexpr uint32_t sp_meta_cols = (NT * 2 * sp_rtl_i_ratio + 31) / 32;
   static constexpr uint32_t sp_per_warp_depth = cfg::m_steps * (cfg::k_steps / 2);
-  static constexpr uint32_t sp_cols_per_load = NT / sp_per_warp_depth;
-  static constexpr uint32_t sp_num_meta_loads = (sp_meta_cols + sp_cols_per_load - 1) / sp_cols_per_load;
+  static constexpr uint32_t sp_banks_per_store = (NT < sp_per_warp_depth) ? NT : sp_per_warp_depth;
+  static constexpr uint32_t sp_stores_per_col = (NT < sp_per_warp_depth) ? (sp_per_warp_depth / NT) : 1;
+  static constexpr uint32_t sp_cols_per_load = (NT >= sp_per_warp_depth) ? (NT / sp_per_warp_depth) : 1;
+  static constexpr uint32_t sp_num_meta_loads = (sp_meta_cols * sp_stores_per_col + sp_cols_per_load - 1) / sp_cols_per_load;
   static constexpr uint32_t meta_stride = sp_num_meta_loads * NT;
   static constexpr uint32_t sparse_k_steps = cfg::k_steps / 2;
   static constexpr uint32_t sparse_regs = cfg::m_steps * sparse_k_steps;

@@ -95,19 +95,28 @@ package VX_tcu_pkg;
 
     // Meta-store micro-op expansion parameters
     localparam TCU_META_PER_WARP_DEPTH = TCU_M_STEPS * (TCU_K_STEPS / 2);
-    localparam TCU_META_COLS_PER_LOAD  = TCU_BLOCK_CAP / TCU_META_PER_WARP_DEPTH;
+    localparam TCU_META_BANKS_PER_STORE = (TCU_BLOCK_CAP < TCU_META_PER_WARP_DEPTH)
+        ? TCU_BLOCK_CAP : TCU_META_PER_WARP_DEPTH;
+    localparam TCU_META_STORES_PER_COL  = (TCU_BLOCK_CAP < TCU_META_PER_WARP_DEPTH)
+        ? (TCU_META_PER_WARP_DEPTH / TCU_BLOCK_CAP) : 1;
+    localparam TCU_META_COLS_PER_LOAD   = (TCU_BLOCK_CAP >= TCU_META_PER_WARP_DEPTH)
+        ? (TCU_BLOCK_CAP / TCU_META_PER_WARP_DEPTH) : 1;
 
     function automatic logic [4:0] meta_num_cols(input logic [3:0] fmt);
         case (fmt)
             TCU_FP16_ID, TCU_BF16_ID:
                 return 5'((TCU_BLOCK_CAP + 7) / 8);   // 16-bit: ceil(NT/8)
             TCU_FP8_ID, TCU_BF8_ID, TCU_I8_ID, TCU_U8_ID:
-                return 5'(TCU_BLOCK_CAP / 4);   // 8-bit: NT/4
+                return 5'((TCU_BLOCK_CAP + 3) / 4);   // 8-bit: ceil(NT/4)
             TCU_I4_ID, TCU_U4_ID, TCU_NVFP4_ID:
-                return 5'(TCU_BLOCK_CAP / 2);   // 4-bit: NT/2
+                return 5'((TCU_BLOCK_CAP + 1) / 2);   // 4-bit: ceil(NT/2)
             default:
                 return 5'd1;
         endcase
+    endfunction
+
+    function automatic logic [4:0] meta_num_stores(input logic [3:0] fmt);
+        return 5'(int'(meta_num_cols(fmt)) * TCU_META_STORES_PER_COL);
     endfunction
 `endif
 

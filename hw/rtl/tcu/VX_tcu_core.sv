@@ -80,18 +80,37 @@ module VX_tcu_core import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     // meta_store: extract per-row write data from rs1_data lanes
     localparam PER_WARP_DEPTH = TCU_META_PER_WARP_DEPTH;
     localparam COLS_PER_LOAD  = TCU_META_COLS_PER_LOAD;
+    localparam STORES_PER_COL = TCU_META_STORES_PER_COL;
+    localparam BANKS_PER_STORE = TCU_META_BANKS_PER_STORE;
     localparam LG_CPL = $clog2((COLS_PER_LOAD > 1) ? COLS_PER_LOAD : 2);
     localparam LG_PD  = $clog2(PER_WARP_DEPTH);
     wire meta_wr_en = execute_fire && is_meta_store;
     wire [PER_WARP_DEPTH-1:0][31:0] meta_wr_data;
-    wire [$clog2(TCU_BLOCK_CAP)-1:0] meta_thread_offset;
-    if (COLS_PER_LOAD > 1) begin : g_meta_off
-        assign meta_thread_offset = {fmt_d[LG_CPL-1:0], {LG_PD{1'b0}}};
-    end else begin : g_meta_off
-        assign meta_thread_offset = '0;
-    end
-    for (genvar r = 0; r < PER_WARP_DEPTH; ++r) begin : g_meta_wr
-        assign meta_wr_data[r] = 32'(execute_if.data.rs1_data[meta_thread_offset + r]);
+    wire [3:0] meta_actual_col_idx;
+    wire [PER_WARP_DEPTH-1:0] meta_wr_bank_en;
+
+    if (STORES_PER_COL > 1) begin : g_meta_multi_store
+        localparam LG_SPC = $clog2(STORES_PER_COL);
+        wire [LG_SPC-1:0] bank_group = fmt_d[LG_SPC-1:0];
+        assign meta_actual_col_idx = 4'(fmt_d >> LG_SPC);
+        for (genvar r = 0; r < PER_WARP_DEPTH; ++r) begin : g_bank_en
+            assign meta_wr_bank_en[r] = (bank_group == LG_SPC'(r / BANKS_PER_STORE));
+        end
+        for (genvar r = 0; r < PER_WARP_DEPTH; ++r) begin : g_meta_wr
+            assign meta_wr_data[r] = 32'(execute_if.data.rs1_data[r % BANKS_PER_STORE]);
+        end
+    end else begin : g_meta_single_store
+        assign meta_actual_col_idx = fmt_d;
+        assign meta_wr_bank_en = {PER_WARP_DEPTH{1'b1}};
+        wire [$clog2(TCU_BLOCK_CAP)-1:0] meta_thread_offset;
+        if (COLS_PER_LOAD > 1) begin : g_meta_off
+            assign meta_thread_offset = {fmt_d[LG_CPL-1:0], {LG_PD{1'b0}}};
+        end else begin : g_meta_off
+            assign meta_thread_offset = '0;
+        end
+        for (genvar r = 0; r < PER_WARP_DEPTH; ++r) begin : g_meta_wr
+            assign meta_wr_data[r] = 32'(execute_if.data.rs1_data[meta_thread_offset + r]);
+        end
     end
 
     // meta_store: force rd=0 in mdata_queue header (x0 write is harmless)
@@ -183,8 +202,9 @@ module VX_tcu_core import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
         .vld_meta_block(vld_meta_block),
         .wr_en         (meta_wr_en),
         .wr_wid        (wid),
-        .wr_col_idx    (fmt_d),
-        .wr_data       (meta_wr_data)
+        .wr_col_idx    (meta_actual_col_idx),
+        .wr_data       (meta_wr_data),
+        .wr_bank_en    (meta_wr_bank_en)
     );
 `endif
 

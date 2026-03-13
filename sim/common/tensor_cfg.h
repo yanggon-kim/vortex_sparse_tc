@@ -237,8 +237,10 @@ public:
   static constexpr uint32_t meta_block_width = NT * 2 * rtl_i_ratio; // bits
   static constexpr uint32_t meta_cols = (meta_block_width + 31) / 32;
   static constexpr uint32_t per_warp_depth = m_steps * (k_steps / 2);
-  static constexpr uint32_t meta_cols_per_load = NT / per_warp_depth;
-  static constexpr uint32_t num_meta_loads = (meta_cols + meta_cols_per_load - 1) / meta_cols_per_load;
+  static constexpr uint32_t banks_per_store = (NT < per_warp_depth) ? NT : per_warp_depth;
+  static constexpr uint32_t stores_per_col = (NT < per_warp_depth) ? (per_warp_depth / NT) : 1;
+  static constexpr uint32_t meta_cols_per_load = (NT >= per_warp_depth) ? (NT / per_warp_depth) : 1;
+  static constexpr uint32_t num_meta_loads = (meta_cols * stores_per_col + meta_cols_per_load - 1) / meta_cols_per_load;
   static constexpr uint32_t meta_stride = num_meta_loads * NT;  // words per K-tile metadata
 #endif
 };

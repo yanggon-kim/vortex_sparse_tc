@@ -681,8 +681,8 @@ public:
 
     auto fedp = select_FEDP(fmt_s, fmt_d);
 
-    if (cfg::sym_sparse || (this->arch_.num_threads() != 8 && this->arch_.num_threads() != 32)) {
-      std::cout << "Error: WMMA_SP unsupported for NUM_THREADS=" << this->arch_.num_threads() << std::endl;
+    if (cfg::sym_sparse) {
+      std::cout << "Error: WMMA_SP unsupported for symmetric sparse NT=" << this->arch_.num_threads() << std::endl;
       std::abort();
     }
 
@@ -807,16 +807,30 @@ public:
     __unused(trace_data);
 
     constexpr uint32_t meta_per_warp_depth = cfg::m_steps * (cfg::k_steps / 2);
-    constexpr uint32_t meta_cols_per_load = NUM_THREADS / meta_per_warp_depth;
+    constexpr uint32_t banks_per_store = (NUM_THREADS < meta_per_warp_depth) ? NUM_THREADS : meta_per_warp_depth;
+    constexpr uint32_t stores_per_col = (NUM_THREADS < meta_per_warp_depth) ? (meta_per_warp_depth / NUM_THREADS) : 1;
+    constexpr uint32_t cols_per_load = (NUM_THREADS >= meta_per_warp_depth) ? (NUM_THREADS / meta_per_warp_depth) : 1;
     uint32_t num_cols = meta_num_cols(fmt_s);
-    if (col_idx >= num_cols) {
-      std::cout << "Error: META_STORE column out of range: " << col_idx << std::endl;
+    uint32_t num_stores = num_cols * stores_per_col;
+    if (col_idx >= num_stores) {
+      std::cout << "Error: META_STORE store index out of range: " << col_idx << " (max=" << num_stores << ")" << std::endl;
       std::abort();
     }
 
-    uint32_t thread_offset = (meta_cols_per_load > 1) ? ((col_idx % meta_cols_per_load) * meta_per_warp_depth) : 0;
-    for (uint32_t bank = 0; bank < meta_per_warp_depth; ++bank) {
-      sparse_meta_.at(wid).at(bank * kMaxMetaCols + col_idx) = rs1_data.at(thread_offset + bank).u32;
+    if constexpr (stores_per_col > 1) {
+      // NT < PD: each store writes only banks_per_store banks
+      uint32_t actual_col = col_idx / stores_per_col;
+      uint32_t bank_group = col_idx % stores_per_col;
+      uint32_t bank_start = bank_group * banks_per_store;
+      for (uint32_t r = 0; r < banks_per_store; ++r) {
+        sparse_meta_.at(wid).at((bank_start + r) * kMaxMetaCols + actual_col) = rs1_data.at(r).u32;
+      }
+    } else {
+      // NT >= PD: original behavior
+      uint32_t thread_offset = (cols_per_load > 1) ? ((col_idx % cols_per_load) * meta_per_warp_depth) : 0;
+      for (uint32_t bank = 0; bank < meta_per_warp_depth; ++bank) {
+        sparse_meta_.at(wid).at(bank * kMaxMetaCols + col_idx) = rs1_data.at(thread_offset + bank).u32;
+      }
     }
   }
 
