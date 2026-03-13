@@ -521,18 +521,18 @@ static inline uint32_t meta_num_cols(uint32_t fmt_s) {
   switch (fmt_s) {
   case vt::fp16::id:
   case vt::bf16::id:
-    return NUM_THREADS / 8;
+    return (NUM_THREADS + 7) / 8;
   case vt::fp8::id:
   case vt::bf8::id:
   case vt::int8::id:
   case vt::uint8::id:
   case vt::mxfp8::id:
   case vt::mxint8::id:
-    return NUM_THREADS / 4;
+    return (NUM_THREADS + 3) / 4;
   case vt::int4::id:
   case vt::uint4::id:
   case vt::nvfp4::id:
-    return NUM_THREADS / 2;
+    return (NUM_THREADS + 1) / 2;
   default:
     return 1;
   }
@@ -681,7 +681,7 @@ public:
 
     auto fedp = select_FEDP(fmt_s, fmt_d);
 
-    if (cfg::nt16_sparse || (this->arch_.num_threads() != 8 && this->arch_.num_threads() != 32)) {
+    if (cfg::sym_sparse || (this->arch_.num_threads() != 8 && this->arch_.num_threads() != 32)) {
       std::cout << "Error: WMMA_SP unsupported for NUM_THREADS=" << this->arch_.num_threads() << std::endl;
       std::abort();
     }

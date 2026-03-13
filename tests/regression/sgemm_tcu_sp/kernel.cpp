@@ -27,7 +27,7 @@ void kernel_body(kernel_arg_t *__UNIFORM__ arg) {
 
   // Per-K-tile metadata reload
   constexpr uint32_t rtl_i_ratio = 32 / vt::ITYPE::bits;
-  constexpr uint32_t meta_cols = (NUM_THREADS * 2 * rtl_i_ratio) / 32;
+  constexpr uint32_t meta_cols = (NUM_THREADS * 2 * rtl_i_ratio + 31) / 32;
   using kcfg = vt::wmma_config_t<NUM_THREADS>;
   constexpr uint32_t PD = kcfg::m_steps * (kcfg::k_steps / 2);
   constexpr uint32_t meta_cols_per_load = NUM_THREADS / PD;

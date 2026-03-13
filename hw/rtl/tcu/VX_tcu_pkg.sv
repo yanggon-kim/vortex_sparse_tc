@@ -80,13 +80,13 @@ package VX_tcu_pkg;
     localparam TCU_B_SUB_BLOCKS = TCU_BLOCK_CAP / TCU_B_BLOCK_SIZE;
 
 `ifdef TCU_SPARSE_ENABLE
-    // NT=16 symmetric sparse flag
-    localparam NT16_SPARSE = (TCU_LG_BLOCK_CAP == 4);
+    // Symmetric sparse flag (NT=4 and NT=16 share column-pair B layout + tmask alternation)
+    localparam SYM_SPARSE = (TCU_BLOCK_EM == TCU_BLOCK_EN);
 
     // B micro-tiling (sparse 2:4)
     // NT=16: column-pair layout (2 cols × tcK × 2 candidates = NT lanes per block)
     // NT=8/32: standard interleaved layout (tcK × tcN × 2 = NT lanes per block)
-    localparam TCU_B_BLOCK_SIZE_SP = NT16_SPARSE ? TCU_BLOCK_CAP : (TCU_TC_K * TCU_TC_N) * 2;
+    localparam TCU_B_BLOCK_SIZE_SP = SYM_SPARSE ? TCU_BLOCK_CAP : (TCU_TC_K * TCU_TC_N) * 2;
     localparam TCU_B_SUB_BLOCKS_SP = TCU_BLOCK_CAP / TCU_B_BLOCK_SIZE_SP;
 
     // Max metadata widths (sized for widest type: 4-bit elements, I_RATIO=8)
@@ -100,7 +100,7 @@ package VX_tcu_pkg;
     function automatic logic [4:0] meta_num_cols(input logic [3:0] fmt);
         case (fmt)
             TCU_FP16_ID, TCU_BF16_ID:
-                return 5'(TCU_BLOCK_CAP / 8);   // 16-bit: NT/8
+                return 5'((TCU_BLOCK_CAP + 7) / 8);   // 16-bit: ceil(NT/8)
             TCU_FP8_ID, TCU_BF8_ID, TCU_I8_ID, TCU_U8_ID:
                 return 5'(TCU_BLOCK_CAP / 4);   // 8-bit: NT/4
             TCU_I4_ID, TCU_U4_ID, TCU_NVFP4_ID:

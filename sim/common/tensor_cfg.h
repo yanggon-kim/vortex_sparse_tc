@@ -197,12 +197,12 @@ public:
   static constexpr uint32_t b_sub_steps  = n_steps / b_sub_blocks;    // number of B sub-steps per register
 
 #ifdef TCU_SPARSE_ENABLE
-  // NT=16 symmetric sparse flag
-  static constexpr bool nt16_sparse = (lg_block_cap == 4);
+  // Symmetric sparse flag (NT=4 and NT=16 share column-pair B layout + tmask alternation)
+  static constexpr bool sym_sparse = (block_em == block_en);
 
   // NT=16: column-pair layout (2 cols × tcK × 2 candidates = block_cap lanes per block)
   // NT=8/32: standard interleaved layout (tcK × tcN × 2 = block_cap lanes per block)
-  static constexpr uint32_t b_block_size_sp = nt16_sparse ? block_cap : (tcK * tcN) * 2;
+  static constexpr uint32_t b_block_size_sp = sym_sparse ? block_cap : (tcK * tcN) * 2;
   static constexpr uint32_t b_sub_blocks_sp = block_cap / b_block_size_sp;
   static constexpr uint32_t b_sub_steps_sp  = n_steps / b_sub_blocks_sp;
 #endif
@@ -235,7 +235,7 @@ public:
   static constexpr uint32_t itype_bits = It::bits;
   static constexpr uint32_t rtl_i_ratio = 32 / itype_bits;
   static constexpr uint32_t meta_block_width = NT * 2 * rtl_i_ratio; // bits
-  static constexpr uint32_t meta_cols = meta_block_width / 32;
+  static constexpr uint32_t meta_cols = (meta_block_width + 31) / 32;
   static constexpr uint32_t per_warp_depth = m_steps * (k_steps / 2);
   static constexpr uint32_t meta_cols_per_load = NT / per_warp_depth;
   static constexpr uint32_t num_meta_loads = (meta_cols + meta_cols_per_load - 1) / meta_cols_per_load;
