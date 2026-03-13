@@ -56,7 +56,7 @@ module VX_tcu_uops import VX_tcu_pkg::*, VX_gpu_pkg::*; (
     wire is_meta_store = (ibuf_in.op_type == INST_TCU_META_STORE);
 
     /* verilator lint_off UNUSEDSIGNAL */
-    wire [4:0] sparse_meta_stores = meta_num_stores(ibuf_in.op_args.tcu.fmt_s);
+    wire [5:0] sparse_meta_stores = meta_num_stores(ibuf_in.op_args.tcu.fmt_s);
     /* verilator lint_on UNUSEDSIGNAL */
 
     // Combinational meta-phase detection — comparator/subtractor absorbed
@@ -114,9 +114,11 @@ module VX_tcu_uops import VX_tcu_pkg::*, VX_gpu_pkg::*; (
     // -----------------------------------------------------------------------
     // Register-offset arithmetic.
     // -----------------------------------------------------------------------
+    /* verilator lint_off UNUSEDSIGNAL */
     logic [`UP(CTR_W)-1:0] rs1_offset;
     logic [`UP(CTR_W)-1:0] rs2_offset;
     logic [`UP(CTR_W)-1:0] rs3_offset;
+    /* verilator lint_on UNUSEDSIGNAL */
 
 `ifdef TCU_SPARSE_ENABLE
     if (SYM_SPARSE) begin : g_sym_off
@@ -186,11 +188,11 @@ module VX_tcu_uops import VX_tcu_pkg::*, VX_gpu_pkg::*; (
         wire [`UP(CTR_W)-1:0] n_sp_s = `UP(CTR_W)'(eff_ctr[0 +: (LG_N + LG_K)]);
         wire [`UP(CTR_W)-1:0] m_sp_s = `UP(CTR_W)'(eff_ctr[(LG_N + LG_K) +: LG_M]);
         /* verilator lint_on UNUSEDSIGNAL */
-        assign ibuf_out.op_args.tcu.step_m = meta_uop ? '0 : (is_sparse ? 4'(m_sp_s) : 4'(m_index));
+        assign ibuf_out.op_args.tcu.step_m = meta_uop ? 4'(ctr >> 4) : (is_sparse ? 4'(m_sp_s) : 4'(m_index));
         assign ibuf_out.op_args.tcu.step_n = meta_uop ? '0 : (is_sparse ? 4'(n_sp_s) : 4'(n_index));
         assign ibuf_out.op_args.tcu.step_k = meta_uop ? '0 : (is_sparse ? 4'(0)      : 4'(k_index));
     end else begin : g_def_steps
-        assign ibuf_out.op_args.tcu.step_m = meta_uop ? '0 : 4'(m_index);
+        assign ibuf_out.op_args.tcu.step_m = meta_uop ? 4'(ctr >> 4) : 4'(m_index);
         assign ibuf_out.op_args.tcu.step_n = meta_uop ? '0 : 4'(n_index);
         assign ibuf_out.op_args.tcu.step_k = meta_uop ? '0 : 4'(k_index);
     end

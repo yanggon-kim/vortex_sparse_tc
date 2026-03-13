@@ -34,7 +34,7 @@ module VX_tcu_meta import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     // Write port (meta_store instruction)
     input wire          wr_en,
     input wire [`LOG2UP(`NUM_WARPS)-1:0] wr_wid,
-    input wire [3:0]    wr_col_idx,
+    input wire [5:0]    wr_col_idx,
     input wire [PER_WARP_DEPTH-1:0][31:0] wr_data,
     input wire [PER_WARP_DEPTH-1:0]       wr_bank_en
 );
@@ -80,7 +80,7 @@ module VX_tcu_meta import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
     // Column write-enable (one-hot from wr_col_idx)
     wire [NUM_COLS-1:0] col_wren;
     for (genvar c = 0; c < NUM_COLS; ++c) begin : g_col_wren
-        assign col_wren[c] = (c[3:0] == wr_col_idx);
+        assign col_wren[c] = (6'(c) == wr_col_idx);
     end
 
     // Per-column RAMs avoid WRENW partial writes (FPGA LUTRAM byte-enable bug).

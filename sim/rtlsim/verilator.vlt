@@ -1,0 +1,11 @@
+`verilator_config
+
+lint_off -rule BLKANDNBLK -file "/home/yanggon/00_tensor_core/01_sparse_rtlsim/vortex_sparse_tc/third_party/cvfpu/*"
+lint_off -rule UNOPTFLAT -file "/home/yanggon/00_tensor_core/01_sparse_rtlsim/vortex_sparse_tc/third_party/cvfpu/*"
+lint_off -file "/home/yanggon/00_tensor_core/01_sparse_rtlsim/vortex_sparse_tc/third_party/cvfpu/*"
+
+lint_off -rule BLKANDNBLK -file "/home/yanggon/00_tensor_core/01_sparse_rtlsim/vortex_sparse_tc/third_party/hardfloat/*"
+lint_off -rule UNOPTFLAT -file "/home/yanggon/00_tensor_core/01_sparse_rtlsim/vortex_sparse_tc/third_party/hardfloat/*"
+lint_off -file "/home/yanggon/00_tensor_core/01_sparse_rtlsim/vortex_sparse_tc/third_party/hardfloat/*"
+
+lint_off -rule WIDTHCONCAT -file "*/VX_opc_unit.sv"
