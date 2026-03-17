@@ -171,6 +171,8 @@ module VX_tcu_uops import VX_tcu_pkg::*, VX_gpu_pkg::*; (
     always_comb begin
         ibuf_r = ibuf_in;
 `ifdef TCU_SPARSE_ENABLE
+        /* verilator lint_off WIDTHTRUNC */
+        /* verilator lint_off WIDTHEXPAND */
         if (SYM_SPARSE) begin
             ibuf_r.tmask = is_sparse
                 ? (is_meta_phase ? ibuf_in.tmask
@@ -178,6 +180,8 @@ module VX_tcu_uops import VX_tcu_pkg::*, VX_gpu_pkg::*; (
                                    : ibuf_in.tmask &  sym_mask_lo))
                 : ibuf_in.tmask;
         end
+        /* verilator lint_on WIDTHEXPAND */
+        /* verilator lint_on WIDTHTRUNC */
 
         ibuf_r.op_type = meta_uop ? INST_TCU_META_STORE : ibuf_in.op_type;
         ibuf_r.op_args.tcu.fmt_d = meta_uop ? 4'(ctr) : ibuf_in.op_args.tcu.fmt_d;
