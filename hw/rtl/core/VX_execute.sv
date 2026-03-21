@@ -27,8 +27,6 @@ module VX_execute import VX_gpu_pkg::*; #(
     input pipeline_perf_t   pipeline_perf,
 `endif
 
-    input base_dcrs_t       base_dcrs,
-
     // Dcache interface
     VX_lsu_mem_if.master    lsu_mem_if [`NUM_LSU_BLOCKS],
 
@@ -46,7 +44,10 @@ module VX_execute import VX_gpu_pkg::*; #(
     // scheduler interfaces
     VX_sched_csr_if.slave   sched_csr_if,
     VX_branch_ctl_if.master branch_ctl_if [`NUM_ALU_BLOCKS],
-    VX_warp_ctl_if.master   warp_ctl_if
+    VX_warp_ctl_if.master   warp_ctl_if,
+
+    // DCR-CSR interface
+    VX_dcr_csr_if           dcr_csr_if
 );
 
 `ifdef EXT_F_ENABLE
@@ -109,7 +110,6 @@ module VX_execute import VX_gpu_pkg::*; #(
         .sysmem_perf    (sysmem_perf),
         .pipeline_perf  (pipeline_perf),
     `endif
-        .base_dcrs      (base_dcrs),
         .dispatch_if    (dispatch_if[EX_SFU * `ISSUE_WIDTH +: `ISSUE_WIDTH]),
         .commit_if      (commit_if[EX_SFU * `ISSUE_WIDTH +: `ISSUE_WIDTH]),
     `ifdef EXT_F_ENABLE
@@ -120,7 +120,8 @@ module VX_execute import VX_gpu_pkg::*; #(
         .dxa_txbar_bus_if(dxa_txbar_bus_if),
     `endif
         .sched_csr_if   (sched_csr_if),
-        .warp_ctl_if    (warp_ctl_if)
+        .warp_ctl_if    (warp_ctl_if),
+        .dcr_csr_if     (dcr_csr_if)
     );
 
 endmodule

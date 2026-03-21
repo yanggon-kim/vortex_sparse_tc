@@ -20,6 +20,7 @@
 #include <mem.h>
 #include "types.h"
 #include "instr.h"
+#include "cta_dispatcher.h"
 #ifdef EXT_TCU_ENABLE
 #include "tensor_unit.h"
 #endif
@@ -30,7 +31,6 @@
 namespace vortex {
 
 class Arch;
-class DCRS;
 class Core;
 class Instr;
 class instr_trace_t;
@@ -49,6 +49,31 @@ struct ipdom_entry_t {
 
 ///////////////////////////////////////////////////////////////////////////////
 
+struct cta_csrs_t {
+  uint32_t cta_id;
+  uint32_t cta_rank;
+  uint32_t cta_size;
+  uint32_t thread_idx[3];
+  uint32_t block_idx[3];
+  uint32_t block_dim[3];
+  uint32_t grid_dim[3];
+  uint64_t lmem_addr;
+
+  cta_csrs_t()
+    : cta_id(0)
+    , cta_rank(0)
+    , cta_size(0)
+    , lmem_addr(0)
+  {
+    thread_idx[0] = thread_idx[1] = thread_idx[2] = 0;
+    block_idx[0]  = block_idx[1]  = block_idx[2]  = 0;
+    block_dim[0]  = block_dim[1]  = block_dim[2]  = 1;
+    grid_dim[0]   = grid_dim[1]   = grid_dim[2]   = 1;
+  }
+};
+
+///////////////////////////////////////////////////////////////////////////////
+
 struct warp_t {
   std::vector<std::vector<Word>>    ireg_file;
   std::vector<std::vector<uint64_t>>freg_file;
@@ -59,9 +84,15 @@ struct warp_t {
   Byte                              fcsr;
   uint32_t                          uuid;
 
+  // Per-warp MSCRATCH (holds kernel arg pointer, set at CTA dispatch)
+  Word                              mscratch;
+
+  // CTA CSR values set at dispatch time
+  cta_csrs_t                        cta_csrs;
+
   warp_t(uint32_t num_threads);
 
-  void reset(uint64_t startup_addr);
+  void reset();
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -76,7 +107,7 @@ struct wspawn_t {
 
 class Emulator {
 public:
-  Emulator(const Arch &arch, const DCRS &dcrs, Core* core);
+  Emulator(const Arch &arch, Core* core);
 
   ~Emulator();
 
@@ -112,9 +143,13 @@ public:
 
   int get_exitcode() const;
 
-  void dcache_read(void* data, uint64_t addr, uint32_t size);
+  void mem_read(void* data, uint64_t addr, uint32_t size);
 
-  void dcache_write(const void* data, uint64_t addr, uint32_t size);
+  void mem_write(const void* data, uint64_t addr, uint32_t size);
+
+  int dcr_write(uint32_t addr, uint32_t value);
+
+  int dcr_read(uint32_t addr, uint32_t tag, uint32_t* value);
 
   const auto& active_warps() const {
     return active_warps_;
@@ -159,9 +194,13 @@ private:
   void trigger_ecall();
   void trigger_ebreak();
 
+  void activate_warp(uint32_t wid, const cta_warp_record_t& rec);
+
   const Arch& arch_;
-  const DCRS& dcrs_;
   Core*       core_;
+  uint32_t    mpm_class_;
+
+  CtaDispatcher cta_dispatcher_;
 
   std::vector<warp_t> warps_;
   WarpMask    active_warps_;
@@ -170,7 +209,6 @@ private:
   std::unordered_map<int, std::stringstream> print_bufs_;
   MemoryUnit  mmu_;
   uint32_t    ipdom_size_;
-  Word        csr_mscratch_;
   wspawn_t    wspawn_;
 
   PoolAllocator<Instr, 64> instr_pool_;

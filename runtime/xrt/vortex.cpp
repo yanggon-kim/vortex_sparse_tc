@@ -49,7 +49,6 @@ using namespace vortex;
 #define MMIO_ISA_ADDR 0x18
 #define MMIO_DCR_ADDR 0x20
 #define MMIO_SCP_ADDR 0x28
-#define MMIO_MEM_ADDR 0x30
 
 #define CTL_AP_START (1 << 0)
 #define CTL_AP_DONE (1 << 1)
@@ -523,6 +522,16 @@ public:
     if (dev_addr + asize > global_mem_size_)
       return -1;
 
+    // flush GPU caches before reading back results
+    {
+      uint64_t num_cores;
+      CHECK_ERR(this->get_caps(VX_CAPS_NUM_CORES, &num_cores), { return err; });
+      uint32_t dummy;
+      for (uint32_t cid = 0; cid < (uint32_t)num_cores; ++cid) {
+        CHECK_ERR(this->dcr_read(VX_DCR_BASE_CACHE_FLUSH, cid, &dummy), { return err; });
+      }
+    }
+
     for (uint64_t end = dev_addr + asize; dev_addr < end;
          dev_addr += CACHE_BLOCK_SIZE, host_ptr += CACHE_BLOCK_SIZE) {
     #ifdef BANK_INTERLEAVE
@@ -556,28 +565,36 @@ public:
     return 0;
   }
 
-  int start(uint64_t krnl_addr, uint64_t args_addr) {
-    // set kernel info
-    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ADDR0, krnl_addr & 0xffffffff), {
-      return err;
-    });
-    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ADDR1, krnl_addr >> 32), {
-      return err;
-    });
-    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ARG0, args_addr & 0xffffffff), {
-      return err;
-    });
-    CHECK_ERR(this->dcr_write(VX_DCR_BASE_STARTUP_ARG1, args_addr >> 32), {
-      return err;
-    });
+  int start_wg(uint64_t krnl_addr, uint64_t args_addr, uint32_t dimension,
+               const uint32_t *grid_dim, const uint32_t *block_dim, uint32_t lmem_size) {
+    // setup kernel launch parameters
+    uint64_t threads_per_warp;
+    CHECK_ERR(this->get_caps(VX_CAPS_NUM_THREADS, &threads_per_warp), { return err; });
+    uint32_t block_size, warp_step_x, warp_step_y, warp_step_z;
+    prepare_kernel_launch_params(threads_per_warp, dimension, block_dim,
+        &block_size, &warp_step_x, &warp_step_y, &warp_step_z);
+
+    // configure kernel launch
+    CHECK_ERR(this->dcr_write(VX_DCR_KMU_STARTUP_ADDR0, krnl_addr & 0xffffffff), { return err; });
+    CHECK_ERR(this->dcr_write(VX_DCR_KMU_STARTUP_ADDR1, krnl_addr >> 32), { return err; });
+    CHECK_ERR(this->dcr_write(VX_DCR_KMU_STARTUP_ARG0, args_addr & 0xffffffff), { return err; });
+    CHECK_ERR(this->dcr_write(VX_DCR_KMU_STARTUP_ARG1, args_addr >> 32), { return err; });
+    uint32_t grid_regs[] = {VX_DCR_KMU_GRID_DIM_X, VX_DCR_KMU_GRID_DIM_Y, VX_DCR_KMU_GRID_DIM_Z};
+    uint32_t block_regs[] = {VX_DCR_KMU_BLOCK_DIM_X, VX_DCR_KMU_BLOCK_DIM_Y, VX_DCR_KMU_BLOCK_DIM_Z};
+    for (uint32_t i = 0; i < 3; ++i) {
+      CHECK_ERR(this->dcr_write(grid_regs[i], (i < dimension) ? grid_dim[i] : 1), { return err; });
+      CHECK_ERR(this->dcr_write(block_regs[i], (i < dimension && block_dim) ? block_dim[i] : 1), { return err; });
+    }
+    CHECK_ERR(this->dcr_write(VX_DCR_KMU_LMEM_SIZE, lmem_size), { return err; });
+    CHECK_ERR(this->dcr_write(VX_DCR_KMU_BLOCK_SIZE, block_size), { return err; });
+    CHECK_ERR(this->dcr_write(VX_DCR_KMU_WARP_STEP_X, warp_step_x), { return err; });
+    CHECK_ERR(this->dcr_write(VX_DCR_KMU_WARP_STEP_Y, warp_step_y), { return err; });
+    CHECK_ERR(this->dcr_write(VX_DCR_KMU_WARP_STEP_Z, warp_step_z), { return err; });
 
     // start execution
     CHECK_ERR(this->write_register(MMIO_CTL_ADDR, CTL_AP_START), {
       return err;
     });
-
-    // clear mpm cache
-    mpm_cache_.clear();
 
     return 0;
   }
@@ -614,31 +631,29 @@ public:
   }
 
   int dcr_write(uint32_t addr, uint32_t value) {
-    CHECK_ERR(this->write_register(MMIO_DCR_ADDR, addr), {
+    // set bit 31 to signal write mode to the AFU (DCR addr is 12 bits, upper bits are free)
+    CHECK_ERR(this->write_register(MMIO_DCR_ADDR, addr | (1u << 31)), {
       return err;
     });
     CHECK_ERR(this->write_register(MMIO_DCR_ADDR + 4, value), {
       return err;
     });
-    dcrs_.write(addr, value);
     return 0;
   }
 
-  int dcr_read(uint32_t addr, uint32_t *value) const {
-    return dcrs_.read(addr, value);
-  }
-
-  int mpm_query(uint32_t addr, uint32_t core_id, uint64_t *value) {
-    uint32_t offset = addr - VX_CSR_MPM_BASE;
-    if (offset > 31)
-      return -1;
-    if (mpm_cache_.count(core_id) == 0) {
-      uint64_t mpm_mem_addr = IO_MPM_ADDR + core_id * 32 * sizeof(uint64_t);
-      CHECK_ERR(this->download(mpm_cache_[core_id].data(), mpm_mem_addr, 32 * sizeof(uint64_t)), {
-        return err;
-      });
-    }
-    *value = mpm_cache_.at(core_id).at(offset);
+  int dcr_read(uint32_t addr, uint32_t tag, uint32_t *value) {
+    // write DCR address (bit 31 = 0 signals read mode to the AFU)
+    CHECK_ERR(this->write_register(MMIO_DCR_ADDR, addr), {
+      return err;
+    });
+    // write tag to trigger DCR read request
+    CHECK_ERR(this->write_register(MMIO_DCR_ADDR + 4, tag), {
+      return err;
+    });
+    // read back response value (AXI read stalls until dcr_rsp_valid)
+    CHECK_ERR(this->read_register(MMIO_DCR_ADDR + 4, value), {
+      return err;
+    });
     return 0;
   }
 
@@ -652,8 +667,6 @@ private:
   uint64_t global_mem_size_;
   uint64_t clock_freqs_;
   uint64_t memory_bw_;
-  DeviceConfig dcrs_;
-  std::unordered_map<uint32_t, std::array<uint64_t, 32>> mpm_cache_;
   uint32_t lg2_num_banks_;
   uint32_t lg2_bank_size_;
 

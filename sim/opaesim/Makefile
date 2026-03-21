@@ -49,6 +49,8 @@ FPU_INCLUDE = -I$(RTL_DIR)/fpu
 ifneq (,$(filter -DFPU_TYPE_FPNEW, $(XCONFIGS)))
 	RTL_PKGS += $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_pkg.sv $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/cf_math_pkg.sv $(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl/defs_div_sqrt_mvp.sv
 	FPU_INCLUDE += -I$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/include -I$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src -I$(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl -I$(THIRD_PARTY_DIR)/cvfpu/src
+	FPU_INCLUDE += -I$(THIRD_PARTY_DIR)/cvfpu/vendor/openc910/C910_RTL_FACTORY/gen_rtl/vfdsu/rtl -I$(THIRD_PARTY_DIR)/cvfpu/vendor/openc910/C910_RTL_FACTORY/gen_rtl/clk/rtl
+	FPU_INCLUDE += -I$(THIRD_PARTY_DIR)/cvfpu/vendor/opene906/E906_RTL_FACTORY/gen_rtl/fdsu/rtl -I$(THIRD_PARTY_DIR)/cvfpu/vendor/opene906/E906_RTL_FACTORY/gen_rtl/fpu/rtl -I$(THIRD_PARTY_DIR)/cvfpu/vendor/opene906/E906_RTL_FACTORY/gen_rtl/clk/rtl
 endif
 RTL_INCLUDE = -I$(ROOT_DIR)/hw -I$(SRC_DIR) -I$(RTL_DIR) -I$(DPI_DIR) -I$(RTL_DIR)/libs -I$(RTL_DIR)/interfaces -I$(RTL_DIR)/core -I$(RTL_DIR)/mem -I$(RTL_DIR)/cache $(FPU_INCLUDE)
 RTL_INCLUDE += -I$(AFU_DIR) -I$(AFU_DIR)/ccip
@@ -65,17 +67,17 @@ ifneq (,$(filter -DEXT_TCU_ENABLE, $(CONFIGS)))
 	RTL_INCLUDE += -I$(RTL_DIR)/tcu
 	ifneq (,$(filter -DTCU_TYPE_DPI, $(CONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dpi
-	endif
-	ifneq (,$(filter -DTCU_TYPE_DSP, $(CONFIGS)))
+	else ifneq (,$(filter -DTCU_TYPE_DSP, $(CONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dsp
-	endif
-	ifneq (,$(filter -DTCU_TYPE_BHF, $(CONFIGS)))
+	else ifneq (,$(filter -DTCU_TYPE_BHF, $(CONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/bhf
 		RTL_INCLUDE += -J$(THIRD_PARTY_DIR)/hardfloat/source/RISCV
 		RTL_INCLUDE += -I$(THIRD_PARTY_DIR)/hardfloat/source
-	endif
-	ifneq (,$(filter -DTCU_TYPE_TFR, $(CONFIGS)))
+	else ifneq (,$(filter -DTCU_TYPE_TFR, $(CONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/tfr
+	else
+		# No explicit TCU type — VX_config.vh defaults to DPI for simulation
+		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dpi
 	endif
 endif
 

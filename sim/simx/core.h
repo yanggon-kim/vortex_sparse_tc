@@ -15,9 +15,6 @@
 
 #include <vector>
 #include <list>
-#ifdef EXT_DXA_ENABLE
-#include <memory>
-#endif
 #include <simobject.h>
 #include "types.h"
 #include "emulator.h"
@@ -36,15 +33,11 @@
 #include "func_unit.h"
 #include "mem_coalescer.h"
 #include "VX_config.h"
-#ifdef EXT_DXA_ENABLE
-#include "dxa_engine.h"
-#endif
 
 namespace vortex {
 
 class Socket;
 class Arch;
-class DCRS;
 
 class Core : public SimObject<Core> {
 public:
@@ -100,8 +93,7 @@ public:
        const char* name,
        uint32_t core_id,
        Socket* socket,
-       const Arch &arch,
-       const DCRS &dcrs
+       const Arch &arch
   );
 
   ~Core();
@@ -155,24 +147,18 @@ public:
     return mem_coalescers_.at(idx);
   }
 
-  void dcache_read(void* data, uint64_t addr, uint32_t size) {
-    return emulator_.dcache_read(data, addr, size);
+  void mem_read(void* data, uint64_t addr, uint32_t size) {
+    return emulator_.mem_read(data, addr, size);
   }
 
-  void dcache_write(const void* data, uint64_t addr, uint32_t size) {
-    return emulator_.dcache_write(data, addr, size);
+  void mem_write(const void* data, uint64_t addr, uint32_t size) {
+    return emulator_.mem_write(data, addr, size);
   }
 
-#ifdef EXT_DXA_ENABLE
-  bool dxa_issue(uint32_t desc_slot,
-                 uint32_t smem_addr,
-                 const uint32_t coords[5],
-                 uint32_t bar_id);
+  int dcr_write(uint32_t addr, uint32_t value);
 
-  bool dxa_estimate(uint32_t desc_slot, uint32_t* total_elems, uint32_t* elem_bytes);
+  int dcr_read(uint32_t addr, uint32_t tag, uint32_t* value);
 
-  bool dxa_copy(uint32_t desc_slot, uint32_t smem_addr, const uint32_t coords[5], uint32_t* bytes_copied);
-#endif
 
 #ifdef EXT_TCU_ENABLE
   TensorUnit::Ptr& tensor_unit() {
@@ -207,9 +193,6 @@ private:
   uint32_t core_id_;
   Socket* socket_;
   const Arch& arch_;
-#ifdef EXT_DXA_ENABLE
-  const DCRS& dcrs_;
-#endif
 
 #ifdef EXT_TCU_ENABLE
   TensorUnit::Ptr tensor_unit_;
@@ -218,6 +201,7 @@ private:
 #ifdef EXT_V_ENABLE
   VecUnit::Ptr vec_unit_;
 #endif
+
 
   Emulator emulator_;
 
@@ -245,10 +229,6 @@ private:
 
   uint32_t commit_exe_;
   std::vector<Arbiter> ibuffer_arbs_;
-
-#ifdef EXT_DXA_ENABLE
-  std::unique_ptr<DxaEngine> dxa_engine_;
-#endif
 
   PoolAllocator<instr_trace_t, 64> trace_pool_;
 

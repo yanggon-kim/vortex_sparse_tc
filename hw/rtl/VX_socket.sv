@@ -45,7 +45,10 @@ module VX_socket import VX_gpu_pkg::*;
     input wire [DXA_SMEM_PORTS_PER_SOCKET-1:0][DXA_SMEM_LOCAL_CORE_W-1:0] dxa_smem_local_core_id,
 `endif
 
-    // Barrier
+    // KMU bus
+    VX_kmu_bus_if.slave     kmu_bus_if[1],
+
+    // Global barrier
     VX_gbar_bus_if.master   gbar_bus_if,
 
     // Status
@@ -56,6 +59,18 @@ module VX_socket import VX_gpu_pkg::*;
     localparam scope_core = 0;
     `SCOPE_IO_SWITCH (`SOCKET_SIZE);
 `endif
+
+    VX_kmu_bus_if per_core_kmu_bus_if[`SOCKET_SIZE]();
+
+    VX_kmu_arb #(
+        .NUM_INPUTS (1),
+        .NUM_OUTPUTS (`SOCKET_SIZE)
+    ) kmu_arb (
+        .clk        (clk),
+        .reset      (reset),
+        .bus_in_if  (kmu_bus_if),
+        .bus_out_if (per_core_kmu_bus_if[`SOCKET_SIZE-1:0])
+    );
 
     VX_gbar_bus_if per_core_gbar_bus_if[`SOCKET_SIZE]();
 
@@ -94,8 +109,6 @@ module VX_socket import VX_gpu_pkg::*;
         .TAG_WIDTH (ICACHE_MEM_TAG_WIDTH)
     ) icache_mem_bus_if[1]();
 
-    `RESET_RELAY (icache_reset, reset);
-
     VX_cache_cluster #(
         .INSTANCE_ID    (`SFORMATF(("%s-icache", INSTANCE_ID))),
         .NUM_UNITS      (`NUM_ICACHES),
@@ -123,7 +136,7 @@ module VX_socket import VX_gpu_pkg::*;
         .cache_perf     (icache_perf),
     `endif
         .clk            (clk),
-        .reset          (icache_reset),
+        .reset          (reset),
         .core_bus_if    (per_core_icache_bus_if),
         .mem_bus_if     (icache_mem_bus_if)
     );
@@ -140,8 +153,6 @@ module VX_socket import VX_gpu_pkg::*;
         .TAG_WIDTH (DCACHE_MEM_TAG_WIDTH)
     ) dcache_mem_bus_if[`L1_MEM_PORTS]();
 
-    `RESET_RELAY (dcache_reset, reset);
-
     VX_cache_cluster #(
         .INSTANCE_ID    (`SFORMATF(("%s-dcache", INSTANCE_ID))),
         .NUM_UNITS      (`NUM_DCACHES),
@@ -157,7 +168,7 @@ module VX_socket import VX_gpu_pkg::*;
         .CRSQ_SIZE      (`DCACHE_CRSQ_SIZE),
         .MSHR_SIZE      (`DCACHE_MSHR_SIZE),
         .MRSQ_SIZE      (`DCACHE_MRSQ_SIZE),
-        .MREQ_SIZE      (`DCACHE_WRITEBACK ? `DCACHE_MSHR_SIZE : `DCACHE_MREQ_SIZE),
+        .MREQ_SIZE      (DCACHE_MREQ_SIZE),
         .TAG_WIDTH      (DCACHE_TAG_WIDTH),
         .WRITE_ENABLE   (1),
         .WRITEBACK      (`DCACHE_WRITEBACK),
@@ -171,7 +182,7 @@ module VX_socket import VX_gpu_pkg::*;
         .cache_perf     (dcache_perf),
     `endif
         .clk            (clk),
-        .reset          (dcache_reset),
+        .reset          (reset),
         .core_bus_if    (per_core_dcache_bus_if),
         .mem_bus_if     (dcache_mem_bus_if)
     );
@@ -309,16 +320,21 @@ module VX_socket import VX_gpu_pkg::*;
 
     ///////////////////////////////////////////////////////////////////////////
 
+    VX_dcr_bus_if per_core_dcr_bus_if[`SOCKET_SIZE]();
+    VX_dcr_arb #(
+        .NUM_REQS    (`SOCKET_SIZE),
+        .REQ_OUT_BUF ((`SOCKET_SIZE > 1) ? 1 : 0)
+    ) dcr_core_arb (
+        .clk        (clk),
+        .reset      (reset),
+        .bus_in_if  (dcr_bus_if),
+        .bus_out_if (per_core_dcr_bus_if)
+    );
+
     wire [`SOCKET_SIZE-1:0] per_core_busy;
 
     // Generate all cores
     for (genvar core_id = 0; core_id < `SOCKET_SIZE; ++core_id) begin : g_cores
-
-        `RESET_RELAY (core_reset, reset);
-
-        VX_dcr_bus_if core_dcr_bus_if();
-        `BUFFER_DCR_BUS_IF (core_dcr_bus_if, dcr_bus_if, 1'b1, (`SOCKET_SIZE > 1))
-
         VX_core #(
             .CORE_ID  ((SOCKET_ID * `SOCKET_SIZE) + core_id),
             .INSTANCE_ID (`SFORMATF(("%s-core%0d", INSTANCE_ID, core_id)))
@@ -326,13 +342,13 @@ module VX_socket import VX_gpu_pkg::*;
             `SCOPE_IO_BIND  (scope_core + core_id)
 
             .clk            (clk),
-            .reset          (core_reset),
+            .reset          (reset),
 
         `ifdef PERF_ENABLE
             .sysmem_perf    (sysmem_perf_tmp),
         `endif
 
-            .dcr_bus_if     (core_dcr_bus_if),
+            .dcr_bus_if     (per_core_dcr_bus_if[core_id]),
 
             .dcache_bus_if  (per_core_dcache_bus_if[core_id * DCACHE_NUM_REQS +: DCACHE_NUM_REQS]),
 
@@ -342,6 +358,8 @@ module VX_socket import VX_gpu_pkg::*;
             .dxa_req_bus_if (per_core_dxa_req_bus_if[core_id]),
             .dxa_bank_wr_if (per_core_dxa_bank_wr_if[core_id]),
         `endif
+
+            .kmu_bus_if     (per_core_kmu_bus_if[core_id]),
 
             .gbar_bus_if    (per_core_gbar_bus_if[core_id]),
 

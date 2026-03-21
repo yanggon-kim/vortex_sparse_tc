@@ -42,6 +42,10 @@ module VX_core import VX_gpu_pkg::*; #(
     VX_dxa_bank_wr_if.slave  dxa_bank_wr_if,
 `endif
 
+    // KMU bus
+    VX_kmu_bus_if.slave     kmu_bus_if,
+
+    // Global barrier
     VX_gbar_bus_if.master   gbar_bus_if,
 
     // Status
@@ -83,13 +87,19 @@ module VX_core import VX_gpu_pkg::*; #(
     end
 `endif
 
-    base_dcrs_t base_dcrs;
+    VX_dcr_csr_if dcr_csr_if();
 
-    VX_dcr_data dcr_data (
+    VX_dcr_flush_if dcr_flush_if();
+
+    VX_dcr_data #(
+        .INSTANCE_ID (`SFORMATF(("%s-dcr_data", INSTANCE_ID))),
+        .CORE_ID (CORE_ID)
+    ) dcr_data (
         .clk        (clk),
         .reset      (reset),
         .dcr_bus_if (dcr_bus_if),
-        .base_dcrs  (base_dcrs)
+        .dcr_csr_if (dcr_csr_if),
+        .dcr_flush_if(dcr_flush_if)
     );
 
     `SCOPE_IO_SWITCH (3);
@@ -105,14 +115,14 @@ module VX_core import VX_gpu_pkg::*; #(
         .sched_perf     (pipeline_perf.sched),
     `endif
 
-        .base_dcrs      (base_dcrs),
-
         .warp_ctl_if    (warp_ctl_if),
         .branch_ctl_if  (branch_ctl_if),
 
         .decode_sched_if(decode_sched_if),
         .issue_sched_if (issue_sched_if),
         .commit_sched_if(commit_sched_if),
+
+        .kmu_bus_if     (kmu_bus_if),
 
         .schedule_if    (schedule_if),
         .sched_csr_if   (sched_csr_if),
@@ -177,14 +187,14 @@ module VX_core import VX_gpu_pkg::*; #(
         .pipeline_perf  (pipeline_perf),
     `endif
 
-        .base_dcrs      (base_dcrs),
-
         .lsu_mem_if     (lsu_mem_if),
 
         .dispatch_if    (dispatch_if),
         .commit_if      (commit_if),
 
         .sched_csr_if   (sched_csr_if),
+
+        .dcr_csr_if     (dcr_csr_if),
 
     `ifdef EXT_DXA_ENABLE
         .dxa_req_bus_if (dxa_req_bus_if),
@@ -222,6 +232,7 @@ module VX_core import VX_gpu_pkg::*; #(
         .dxa_txbar_bus_if(dxa_txbar_bus_if),
     `endif
         .lsu_mem_if    (lsu_mem_if),
+        .dcr_flush_if  (dcr_flush_if),
         .dcache_bus_if (dcache_bus_if)
     );
 

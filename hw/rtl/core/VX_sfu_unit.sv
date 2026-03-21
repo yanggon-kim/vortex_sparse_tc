@@ -25,8 +25,6 @@ module VX_sfu_unit import VX_gpu_pkg::*; #(
     input pipeline_perf_t   pipeline_perf,
 `endif
 
-    input base_dcrs_t       base_dcrs,
-
     // Inputs
     VX_dispatch_if.slave    dispatch_if [`ISSUE_WIDTH],
 
@@ -40,6 +38,8 @@ module VX_sfu_unit import VX_gpu_pkg::*; #(
 `endif
 
     VX_sched_csr_if.slave   sched_csr_if,
+
+    VX_dcr_csr_if           dcr_csr_if,
 
     // Outputs
     VX_commit_if.master     commit_if [`ISSUE_WIDTH],
@@ -134,7 +134,6 @@ module VX_sfu_unit import VX_gpu_pkg::*; #(
         .clk            (clk),
         .reset          (reset),
 
-        .base_dcrs      (base_dcrs),
         .execute_if     (pe_execute_if[PE_IDX_CSRS]),
 
     `ifdef PERF_ENABLE
@@ -147,7 +146,8 @@ module VX_sfu_unit import VX_gpu_pkg::*; #(
     `endif
 
         .sched_csr_if   (sched_csr_if),
-        .result_if      (pe_result_if[PE_IDX_CSRS])
+        .result_if      (pe_result_if[PE_IDX_CSRS]),
+        .dcr_csr_if     (dcr_csr_if)
     );
 
 `ifdef EXT_DXA_ENABLE

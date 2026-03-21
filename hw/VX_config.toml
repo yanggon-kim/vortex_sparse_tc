@@ -45,6 +45,7 @@ EXT_DMA_ENABLE = false
 EXT_DXA_ENABLE = false
 # Cluster-level DXA engine count (decoupled from NUM_CORES/SOCKET_SIZE).
 NUM_DXA_UNITS = "expr: max(1, up($NUM_CORES / 8))"
+DXA_MEM_PORTS = "expr: min($NUM_DXA_UNITS, up($NUM_CORES / $SOCKET_SIZE) * $L1_MEM_PORTS)"
 
 EXT_M_ENABLED = "expr: 1 if $EXT_M_ENABLE else 0"
 EXT_F_ENABLED = "expr: 1 if $EXT_F_ENABLE else 0"
@@ -99,7 +100,7 @@ PAGE_TABLE_BASE_ADDR = "expr: 0x00000000F0000000 if $XLEN_64 else 0xF0000000"
 IO_COUT_ADDR = "expr: $IO_BASE_ADDR"
 IO_COUT_SIZE = 64
 
-IO_MPM_ADDR = "expr: ($IO_COUT_ADDR + $IO_COUT_SIZE)"
+IO_EXIT_CODE = "expr: ($IO_COUT_ADDR + $IO_COUT_SIZE + 8)"
 IO_END_ADDR = "expr: $USER_BASE_ADDR"
 
 [alu]
@@ -227,8 +228,10 @@ TCU_TF32_ENABLE = true
 TCU_BF16_ENABLE = true
 TCU_FP8_ENABLE = true
 TCU_INT_ENABLE = true
+TCU_MX_ENABLE = false
 TCU_MXI8_ENABLE = false
 TCU_SPARSE_ENABLE = false
+TCU_WGMMA_ENABLE = false
 
 [isa_signatures]
 

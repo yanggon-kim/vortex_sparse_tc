@@ -53,7 +53,7 @@ ProcessorImpl::ProcessorImpl(const Arch& arch)
   // create clusters
   for (uint32_t i = 0; i < arch.num_clusters(); ++i) {
     snprintf(sname, 100, "cluster%d", i);
-    clusters_.at(i) = Cluster::Create(sname, i, this, arch, dcrs_);
+    clusters_.at(i) = Cluster::Create(sname, i, this, arch);
   }
 
   // create L3 cache
@@ -136,8 +136,8 @@ void ProcessorImpl::set_satp(uint64_t satp) {
 #endif
 
 int ProcessorImpl::run() {
-  SimPlatform::instance().reset();
   this->reset();
+  kmu_.start();
 
   bool done;
   int exitcode = 0;
@@ -158,14 +158,34 @@ int ProcessorImpl::run() {
 }
 
 void ProcessorImpl::reset() {
+  SimPlatform::instance().reset();
   perf_mem_reads_ = 0;
   perf_mem_writes_ = 0;
   perf_mem_latency_ = 0;
   perf_mem_pending_reads_ = 0;
 }
 
-void ProcessorImpl::dcr_write(uint32_t addr, uint32_t value) {
-  dcrs_.write(addr, value);
+int ProcessorImpl::dcr_write(uint32_t addr, uint32_t value) {
+  // KMU DCRs are stored in the processor-level KMU and not broadcast to cores
+  if (addr >= VX_DCR_KMU_STATE_BEGIN && addr < VX_DCR_KMU_STATE_END) {
+    kmu_.dcr_write(addr, value);
+    return 0;
+  }
+  for (auto& cluster : clusters_) {
+    int ret = cluster->dcr_write(addr, value);
+    if (ret != 0)
+      return ret;
+  }
+  return 0;
+}
+
+int ProcessorImpl::dcr_read(uint32_t addr, uint32_t tag, uint32_t* value) {
+  for (auto& cluster : clusters_) {
+    int ret = cluster->dcr_read(addr, tag, value);
+    if (ret != 0)
+      return ret;
+  }
+  return 0;
 }
 
 ProcessorImpl::PerfStats ProcessorImpl::perf_stats() const {
@@ -200,6 +220,10 @@ void Processor::attach_ram(RAM* mem) {
   impl_->attach_ram(mem);
 }
 
+void Processor::reset() {
+  impl_->reset();
+}
+
 int Processor::run() {
   try {
     return impl_->run();
@@ -217,8 +241,12 @@ int Processor::run() {
   return -1;
 }
 
-void Processor::dcr_write(uint32_t addr, uint32_t value) {
+int Processor::dcr_write(uint32_t addr, uint32_t value) {
   return impl_->dcr_write(addr, value);
+}
+
+int Processor::dcr_read(uint32_t addr, uint32_t tag, uint32_t* value) {
+  return impl_->dcr_read(addr, tag, value);
 }
 
 #ifdef VM_ENABLE

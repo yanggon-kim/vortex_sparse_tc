@@ -123,7 +123,7 @@ struct mxint8 {
   static constexpr uint32_t id = 13;
   static constexpr uint32_t bits = 8;
   static constexpr uint32_t scale_bits = 8;
-  static constexpr uint32_t ele_blcok = 32;
+  static constexpr uint32_t ele_block = 32;
   static constexpr const char* name = "mxi8";
 };
 
@@ -145,6 +145,55 @@ inline const char* fmt_string(uint32_t fmt) {
   case mxint8::id: return mxint8::name;
   default:         return "";
   }
+}
+
+inline constexpr bool sparse_scale_format(uint32_t fmt) {
+  switch (fmt) {
+  case mxfp8::id:
+  case nvfp4::id:
+  case mxint8::id:
+    return true;
+  default:
+    return false;
+  }
+}
+
+inline constexpr bool sparse_format_supported(uint32_t fmt) {
+  switch (fmt) {
+  case fp16::id:
+  case bf16::id:
+  case fp8::id:
+  case bf8::id:
+  case int8::id:
+  case uint8::id:
+  case int4::id:
+  case uint4::id:
+    return true;
+  default:
+    return false;
+  }
+}
+
+inline constexpr uint32_t sparse_meta_num_cols(uint32_t fmt, uint32_t nt) {
+  switch (fmt) {
+  case fp16::id:
+  case bf16::id:
+    return (nt + 7) / 8;
+  case fp8::id:
+  case bf8::id:
+  case int8::id:
+  case uint8::id:
+    return (nt + 3) / 4;
+  case int4::id:
+  case uint4::id:
+    return (nt + 1) / 2;
+  default:
+    return 0;
+  }
+}
+
+inline constexpr uint32_t sparse_meta_total_store_uops(uint32_t fmt, uint32_t stores_per_col, uint32_t nt) {
+  return sparse_meta_num_cols(fmt, nt) * stores_per_col;
 }
 
 template <uint32_t NT,      // number of threads per warp

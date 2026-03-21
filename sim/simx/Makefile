@@ -23,11 +23,11 @@ LDFLAGS += -Wl,-rpath,$(THIRD_PARTY_DIR)/ramulator -L$(THIRD_PARTY_DIR)/ramulato
 
 # Source files definition
 SRCS = $(SW_COMMON_DIR)/util.cpp $(SW_COMMON_DIR)/mem.cpp $(SW_COMMON_DIR)/softfloat_ext.cpp $(SW_COMMON_DIR)/rvfloats.cpp $(SW_COMMON_DIR)/dram_sim.cpp
-SRCS += $(SRC_DIR)/processor.cpp $(SRC_DIR)/cluster.cpp $(SRC_DIR)/socket.cpp $(SRC_DIR)/core.cpp $(SRC_DIR)/emulator.cpp
+SRCS += $(SRC_DIR)/processor.cpp $(SRC_DIR)/cluster.cpp $(SRC_DIR)/socket.cpp $(SRC_DIR)/core.cpp $(SRC_DIR)/emulator.cpp $(SRC_DIR)/kmu.cpp $(SRC_DIR)/cta_dispatcher.cpp
 SRCS += $(SRC_DIR)/decode.cpp $(SRC_DIR)/opc_unit.cpp $(SRC_DIR)/dispatcher.cpp
 SRCS += $(SRC_DIR)/execute.cpp $(SRC_DIR)/func_unit.cpp
 SRCS += $(SRC_DIR)/cache_sim.cpp $(SRC_DIR)/mem_sim.cpp $(SRC_DIR)/local_mem.cpp $(SRC_DIR)/mem_coalescer.cpp
-SRCS += $(SRC_DIR)/dcrs.cpp $(SRC_DIR)/types.cpp
+SRCS += $(SRC_DIR)/types.cpp
 
 # Add V extension sources
 ifneq ($(filter -DEXT_V_ENABLE, $(XCONFIGS)),)
@@ -44,7 +44,7 @@ endif
 
 # Add DXA extension sources
 ifneq ($(filter -DEXT_DXA_ENABLE, $(XCONFIGS)),)
-	SRCS += $(SRC_DIR)/dxa_engine.cpp
+	SRCS += $(SRC_DIR)/dxa_core.cpp
 endif
 
 # Debugging

@@ -20,7 +20,9 @@ module VX_dxa_unified_engine import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
 ) (
     input wire clk,
     input wire reset,
-
+`ifdef PERF_ENABLE
+    output dxa_perf_t dxa_perf,
+`endif
     VX_dcr_bus_if.slave dcr_bus_if,
     VX_dxa_req_bus_if.slave cluster_dxa_bus_if[NUM_DXA_UNITS],
     VX_mem_bus_if.master dxa_gmem_bus_if[NUM_DXA_UNITS],
@@ -328,6 +330,15 @@ module VX_dxa_unified_engine import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
         // ================================================================
         // Worker instantiation
         // ================================================================
+
+`ifdef PERF_ENABLE
+        wire [NUM_DXA_UNITS-1:0][PERF_CTR_BITS-1:0] worker_perf_transfers;
+        wire [NUM_DXA_UNITS-1:0][PERF_CTR_BITS-1:0] worker_perf_gmem_reads;
+        wire [NUM_DXA_UNITS-1:0][PERF_CTR_BITS-1:0] worker_perf_gmem_dedup;
+        wire [NUM_DXA_UNITS-1:0][PERF_CTR_BITS-1:0] worker_perf_smem_writes;
+        wire [NUM_DXA_UNITS-1:0][PERF_CTR_BITS-1:0] worker_perf_gmem_lt;
+`endif
+
         for (genvar i = 0; i < NUM_DXA_UNITS; ++i) begin : g_workers
             VX_dxa_worker #(
                 .INSTANCE_ID(`SFORMATF(("%s-worker%0d", INSTANCE_ID, i))),
@@ -358,8 +369,29 @@ module VX_dxa_unified_engine import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
                 .smem_bank_wr_if   (dxa_smem_bank_wr_if[i]),
                 .smem_core_id      (dxa_smem_core_id[i]),
                 .worker_idle       (worker_idle[i])
+            `ifdef PERF_ENABLE
+                ,
+                .perf_transfers  (worker_perf_transfers[i]),
+                .perf_gmem_reads (worker_perf_gmem_reads[i]),
+                .perf_gmem_dedup (worker_perf_gmem_dedup[i]),
+                .perf_smem_writes(worker_perf_smem_writes[i]),
+                .perf_gmem_lt    (worker_perf_gmem_lt[i])
+            `endif
             );
         end
+
+`ifdef PERF_ENABLE
+        always_comb begin
+            dxa_perf = '0;
+            for (int w = 0; w < NUM_DXA_UNITS; ++w) begin
+                dxa_perf.transfers  += worker_perf_transfers[w];
+                dxa_perf.gmem_reads += worker_perf_gmem_reads[w];
+                dxa_perf.gmem_dedup += worker_perf_gmem_dedup[w];
+                dxa_perf.smem_writes+= worker_perf_smem_writes[w];
+                dxa_perf.gmem_latency += worker_perf_gmem_lt[w];
+            end
+        end
+`endif
 
     `ifdef DBG_TRACE_DXA
         always @(posedge clk) begin
@@ -384,16 +416,16 @@ module VX_dxa_unified_engine import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
         end
     `endif
 
-    `ifdef DBG_TRACE_DXA_TIMELINE
+    `ifdef DBG_TRACE_DXA
         always @(posedge clk) begin
             if (~reset) begin
                 if (issue_fifo_enq) begin
-                    $write("DXA_TL,%0d,ISSUE_ENQ,%0d,%0d,0,ctx=%0d\n",
+                    $write("DXA_TL,%0d,ISSUE_ENQ,core=%0d,wid=%0d,ctx=%0d\n",
                         $time, in_core_id[issue_grant_idx], in_wid[issue_grant_idx],
                         in_ctx_idx[issue_grant_idx]);
                 end
                 if (issue_dispatch) begin
-                    $write("DXA_TL,%0d,DISPATCH,%0d,%0d,%0d,worker=%0d desc=%0d\n",
+                    $write("DXA_TL,%0d,DISPATCH,core=%0d,wid=%0d,bar=%0d,worker=%0d,desc=%0d\n",
                         $time, launch_core_id, launch_wid, launch_bar_addr,
                         idle_worker_idx, launch_desc_slot);
                 end
@@ -408,6 +440,9 @@ module VX_dxa_unified_engine import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
     end else begin : g_dxa_unified_off
         for (genvar i = 0; i < NUM_DXA_UNITS; ++i) begin : g_dxa_off
             assign cluster_dxa_bus_if[i].req_ready = 1'b1;
+`ifdef PERF_ENABLE
+        assign dxa_perf = '0;
+`endif
             `UNUSED_VAR (cluster_dxa_bus_if[i].req_valid)
             `UNUSED_VAR (cluster_dxa_bus_if[i].req_data)
 

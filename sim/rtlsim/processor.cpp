@@ -143,39 +143,49 @@ public:
   #ifndef NDEBUG
     std::cout << std::dec << timestamp << ": [sim] run()" << std::endl;
   #endif
+    // pulse start for one cycle
+    device_->start = 1;
+    this->tick();
+    device_->start = 0;
 
-    // reset device
-    this->reset();
-
-    // start
-    device_->reset = 0;
-    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
-      device_->mem_req_ready[b] = 1;
-    }
-
-    // wait on device to go busy
+    // wait for device to go busy
     while (!device_->busy) {
       this->tick();
     }
 
-    // wait on device to go idle
+    // wait for device to go idle
     while (device_->busy) {
       this->tick();
     }
 
-    // stop
-    device_->reset = 1;
-
     this->cout_flush();
   }
 
-  void dcr_write(uint32_t addr, uint32_t value) {
-    device_->dcr_wr_valid = 1;
-    device_->dcr_wr_addr  = addr;
-    device_->dcr_wr_data  = value;
+  int dcr_write(uint32_t addr, uint32_t value) {
+    device_->dcr_req_valid = 1;
+    device_->dcr_req_rw    = 1;
+    device_->dcr_req_addr  = addr;
+    device_->dcr_req_data  = value;
     this->tick();
-    device_->dcr_wr_valid = 0;
+    device_->dcr_req_valid = 0;
     this->tick();
+    return 0;
+  }
+
+  int dcr_read(uint32_t addr, uint32_t tag, uint32_t* value) {
+    device_->dcr_req_valid = 1;
+    device_->dcr_req_rw    = 0;
+    device_->dcr_req_addr  = addr;
+    device_->dcr_req_data  = tag;
+    this->tick();
+    device_->dcr_req_valid = 0;
+    this->tick();
+    // READ response is returned when dcr_rsp_valid is high
+    while (!device_->dcr_rsp_valid) {
+      this->tick();
+    }
+    *value = device_->dcr_rsp_data;
+    return 0;
   }
 
 private:
@@ -195,18 +205,34 @@ private:
       std::swap(dram_queue_[b], empty);
     }
 
+    device_->start = 0;
     device_->reset = 1;
 
+    // Hold reset high until all internal pipeline state are initialized.
+    // This mimics the behavior of the reset fanout buffering.
     for (int i = 0; i < RESET_DELAY; ++i) {
       device_->clk = 0;
       this->eval();
       device_->clk = 1;
       this->eval();
     }
+
+    device_->reset = 0;
+
+    // Pump clocks after reset drops to allow internal pipeline states to settle.
+    for (int i = 0; i < RESET_DELAY; ++i) {
+      device_->clk = 0;
+      this->eval();
+      device_->clk = 1;
+      this->eval();
+    }
+
+    for (int b = 0; b < PLATFORM_MEMORY_NUM_BANKS; ++b) {
+      device_->mem_req_ready[b] = 1;
+    }
   }
 
   void tick() {
-
     device_->clk = 0;
     this->eval();
 
@@ -367,7 +393,8 @@ private:
   }
 
   void dcr_bus_reset() {
-    device_->dcr_wr_valid = 0;
+    device_->dcr_req_valid = 0;
+    device_->dcr_req_rw    = 0;
   }
 
   void wait(uint32_t cycles) {
@@ -424,6 +451,10 @@ void Processor::run() {
   impl_->run();
 }
 
-void Processor::dcr_write(uint32_t addr, uint32_t value) {
+int Processor::dcr_write(uint32_t addr, uint32_t value) {
   return impl_->dcr_write(addr, value);
+}
+
+int Processor::dcr_read(uint32_t addr, uint32_t tag, uint32_t* value) {
+  return impl_->dcr_read(addr, tag, value);
 }

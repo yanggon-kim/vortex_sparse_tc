@@ -1,4 +1,4 @@
-#include <vx_spawn.h>
+#include <vx_spawn2.h>
 #include <vx_dxa.h>
 #include <vx_barrier.h>
 
@@ -18,7 +18,7 @@ static inline void gemm_accumulate(TYPE& sum, const TYPE* shA, const TYPE* shB, 
   }
 }
 
-void kernel_body(kernel_arg_t* arg) {
+extern "C" void kernel_main(kernel_arg_t* arg) {
   auto C = reinterpret_cast<TYPE*>(arg->C_addr);
 
   const uint32_t size      = arg->size;
@@ -43,8 +43,7 @@ void kernel_body(kernel_arg_t* arg) {
   const uint32_t stage_count  = (mode == 2) ? 2u : 1u;
 
   // Allocate shared memory for tile buffers.
-  auto local_ptr = __local_mem(stage_count * stage_elems * sizeof(TYPE));
-  auto shmem = reinterpret_cast<TYPE*>(local_ptr);
+  auto shmem = reinterpret_cast<TYPE*>(__local_mem());
 
   // Stage 0 and stage 1 tile pointers.
   TYPE* shA[2] = { shmem, shmem + stage_elems };
@@ -56,10 +55,10 @@ void kernel_body(kernel_arg_t* arg) {
   vortex::barrier bar[2] = { vortex::barrier(0), vortex::barrier(1) };
 
   // Only the first hardware warp (warp 0 within the CTA) issues DXA commands.
-  // group_warp_id = vx_warp_id() % __warps_per_group identifies the warp's
-  // position within its CTA (0 = first warp).  __local_group_id is the CTA
-  // group index within the core, NOT the warp-within-CTA index.
-  const bool is_dxa_warp    = (__warps_per_group == 0) ? false : (vx_warp_id() % __warps_per_group == 0);
+  // group_warp_id = vx_warp_id() & (wpg-1) identifies the warp's position
+  // within its CTA (0 = first warp).  Uses AND instead of modulo since
+  // __warps_per_group is always power-of-2, avoiding the expensive REMU insn.
+  const bool is_dxa_warp = (__warps_per_group == 0) ? false : ((vx_warp_id() & (__warps_per_group - 1)) == 0);
 
   if (mode == 2) {
     // ── Double-buffered pipeline ──────────────────────────────────────
@@ -69,8 +68,8 @@ void kernel_body(kernel_arg_t* arg) {
 
     // Prologue: issue DXA copy for first tiles into buffer 0, on bar[0].
     if (is_dxa_warp) {
-      vx_dxa_issue_2d_wg(kDescA, bar[0].id(), (uint32_t)(uintptr_t)shA[0], 0, row_base);
-      vx_dxa_issue_2d_wg(kDescB, bar[0].id(), (uint32_t)(uintptr_t)shB[0], col_base, 0);
+      vx_dxa_issue_2d_wg(kDescA, bar[0].id(), shA[0], 0, row_base);
+      vx_dxa_issue_2d_wg(kDescB, bar[0].id(), shB[0], col_base, 0);
     }
 
     // K-loop: issue next on bar[nxt] → wait current on bar[cur] → compute.
@@ -81,8 +80,8 @@ void kernel_body(kernel_arg_t* arg) {
 
       // (1) Issue DXA for next iteration's tiles on bar[nxt].
       if (has_next && is_dxa_warp) {
-        vx_dxa_issue_2d_wg(kDescA, bar[nxt].id(), (uint32_t)(uintptr_t)shA[nxt], next_k, row_base);
-        vx_dxa_issue_2d_wg(kDescB, bar[nxt].id(), (uint32_t)(uintptr_t)shB[nxt], col_base, next_k);
+        vx_dxa_issue_2d_wg(kDescA, bar[nxt].id(), shA[nxt], next_k, row_base);
+        vx_dxa_issue_2d_wg(kDescB, bar[nxt].id(), shB[nxt], col_base, next_k);
       }
 
       // (2) Wait for current tiles on bar[cur] (DXA completion + CTA sync).
@@ -92,16 +91,16 @@ void kernel_body(kernel_arg_t* arg) {
       gemm_accumulate(sum, shA[cur], shB[cur], tile_size, chunk_k, l_row, l_col);
 
       bar[cur].arrive_and_wait();
-      
+
       cur = nxt;
-      
+
     }
   } else {
     // ── Single-buffered: full-K in one shot ───────────────────────────
     // DXA fetches the entire A and B tiles (tile_size × size) at once.
     if (is_dxa_warp) {
-      vx_dxa_issue_2d_wg(kDescA, bar[0].id(), (uint32_t)(uintptr_t)shA[0], 0, row_base);
-      vx_dxa_issue_2d_wg(kDescB, bar[0].id(), (uint32_t)(uintptr_t)shB[0], col_base, 0);
+      vx_dxa_issue_2d_wg(kDescA, bar[0].id(), shA[0], 0, row_base);
+      vx_dxa_issue_2d_wg(kDescB, bar[0].id(), shB[0], col_base, 0);
     }
     bar[0].arrive_and_wait();
 
@@ -113,10 +112,4 @@ void kernel_body(kernel_arg_t* arg) {
 
   // Store result to global memory.
   C[g_row * size + g_col] = sum;
-}
-
-int main() {
-  auto arg = (kernel_arg_t*)csr_read(VX_CSR_MSCRATCH);
-  return vx_spawn_threads(2, arg->grid_dim, arg->block_dim,
-                          (vx_kernel_func_cb)kernel_body, arg);
 }

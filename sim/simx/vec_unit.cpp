@@ -1,3 +1,16 @@
+// Copyright © 2019-2023
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+// http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "vec_unit.h"
 #include "core.h"
 #include "vec_ops.h"
@@ -147,7 +160,7 @@ public:
           for (uint32_t f = 0; f < nfields; f++) {
             uint64_t mem_addr = base_addr + (i * nfields + f) * vsewb;
             uint64_t mem_data = 0;
-            core_->dcache_read(&mem_data, mem_addr, vsewb);
+            core_->mem_read(&mem_data, mem_addr, vsewb);
             trace_data->mem_addrs.at(tid).push_back({mem_addr, vsewb});
             setVregData(states.vtype.vsew, vreg_file, vd + f * emul, i, mem_data);
           }
@@ -173,7 +186,7 @@ public:
             continue;
           uint64_t mem_addr = base_addr + i * stride;
           uint64_t mem_data = 0;
-          core_->dcache_read(&mem_data, mem_addr, vsewb);
+          core_->mem_read(&mem_data, mem_addr, vsewb);
           trace_data->mem_addrs.at(tid).push_back({mem_addr, vsewb});
           setVregData(states.vtype.vsew, vreg_file, vd, i, mem_data);
         }
@@ -196,7 +209,7 @@ public:
             continue;
           uint64_t mem_addr = base_addr + i * stride;
           uint64_t mem_data = 0;
-          core_->dcache_read(&mem_data, mem_addr, vsewb);
+          core_->mem_read(&mem_data, mem_addr, vsewb);
           trace_data->mem_addrs.at(tid).push_back({mem_addr, vsewb});
           setVregData(states.vtype.vsew, vreg_file, vd, i, mem_data);
         }
@@ -230,7 +243,7 @@ public:
           WordI offset = i * stride + f * vsewb;
           uint64_t mem_addr = base_addr + offset;
           uint64_t mem_data = 0;
-          core_->dcache_read(&mem_data, mem_addr, vsewb);
+          core_->mem_read(&mem_data, mem_addr, vsewb);
           trace_data->mem_addrs.at(tid).push_back({mem_addr, vsewb});
           setVregData(states.vtype.vsew, vreg_file, vd + f * emul, i, mem_data);
         }
@@ -268,7 +281,7 @@ public:
         for (uint32_t f = 0; f < nfields; f++) {
           uint64_t mem_addr = base_addr + offset + f * vsewb;
           uint64_t mem_data = 0;
-          core_->dcache_read(&mem_data, mem_addr, vsewb);
+          core_->mem_read(&mem_data, mem_addr, vsewb);
           trace_data->mem_addrs.at(tid).push_back({mem_addr, vsewb});
           setVregData(states.vtype.vsew, vreg_file, vd + f * emul, i, mem_data);
         }
@@ -316,7 +329,7 @@ public:
           for (uint32_t f = 0; f < nfields; f++) {
             uint64_t mem_addr = base_addr + (i * nfields + f) * vsewb;
             uint64_t value = getVregData(states.vtype.vsew, vreg_file, vs3 + f * emul, i);
-            core_->dcache_write(&value, mem_addr, vsewb);
+            core_->mem_write(&value, mem_addr, vsewb);
             trace_data->mem_addrs.at(tid).push_back({mem_addr, vsewb});
           }
         }
@@ -339,7 +352,7 @@ public:
             continue;
           uint64_t value = getVregData(states.vtype.vsew, vreg_file, vs3, i);
           uint64_t mem_addr = base_addr + i * stride;
-          core_->dcache_write(&value, mem_addr, vsewb);
+          core_->mem_write(&value, mem_addr, vsewb);
           trace_data->mem_addrs.at(tid).push_back({mem_addr, vsewb});
         }
         break;
@@ -360,7 +373,7 @@ public:
             continue;
           uint64_t mem_addr = base_addr + i * stride;
           uint64_t value = getVregData(states.vtype.vsew, vreg_file, vs3, i);
-          core_->dcache_write(&value, mem_addr, vsewb);
+          core_->mem_write(&value, mem_addr, vsewb);
           trace_data->mem_addrs.at(tid).push_back({mem_addr, vsewb});
         }
         break;
@@ -393,7 +406,7 @@ public:
           WordI offset = i * stride + f * vsewb;
           uint64_t mem_addr = base_addr + offset;
           uint64_t value = getVregData(states.vtype.vsew, vreg_file, vs3 + f * emul, i);
-          core_->dcache_write(&value, mem_addr, vsewb);
+          core_->mem_write(&value, mem_addr, vsewb);
           trace_data->mem_addrs.at(tid).push_back({mem_addr, vsewb});
         }
       }
@@ -430,7 +443,7 @@ public:
         for (uint32_t f = 0; f < nfields; f++) {
           uint64_t mem_addr = base_addr + offset + f * vsewb;
           uint64_t value = getVregData(states.vtype.vsew, vreg_file, vs3 + f * emul, i);
-          core_->dcache_write(&value, mem_addr, vsewb);
+          core_->mem_write(&value, mem_addr, vsewb);
           trace_data->mem_addrs.at(tid).push_back({mem_addr, vsewb});
         }
       }

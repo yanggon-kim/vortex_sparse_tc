@@ -130,8 +130,8 @@ extern int vx_upload_file(vx_device_h hdevice, const char* filename, vx_buffer_h
   return 0;
 }
 
-int vx_check_occupancy(vx_device_h hdevice, uint32_t group_size, uint32_t* max_localmem) {
-   // check group size
+int vx_check_occupancy(vx_device_h hdevice, uint32_t block_size, uint32_t* max_localmem) {
+   // check block size
   uint64_t warps_per_core, threads_per_warp;
   CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_NUM_WARPS, &warps_per_core), {
     return err;
@@ -140,14 +140,14 @@ int vx_check_occupancy(vx_device_h hdevice, uint32_t group_size, uint32_t* max_l
     return err;
   });
   uint32_t threads_per_core = warps_per_core * threads_per_warp;
-  if (group_size > threads_per_core) {
-    printf("Error: cannot schedule kernel with group_size > threads_per_core (%d,%d)\n", group_size, threads_per_core);
+  if (block_size > threads_per_core) {
+    printf("Error: cannot schedule kernel with block_size > threads_per_core (%d,%d)\n", block_size, threads_per_core);
     return -1;
   }
 
-  // calculate groups occupancy
-  int warps_per_group = (group_size + threads_per_warp-1) / threads_per_warp;
-  int groups_per_core = warps_per_core / warps_per_group;
+  // calculate blocks occupancy
+  int warps_per_block = (block_size + threads_per_warp-1) / threads_per_warp;
+  int blocks_per_core = warps_per_core / warps_per_block;
 
   // check local memory capacity
   if (max_localmem) {
@@ -155,8 +155,50 @@ int vx_check_occupancy(vx_device_h hdevice, uint32_t group_size, uint32_t* max_l
     CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_LOCAL_MEM_SIZE, &local_mem_size), {
       return err;
     });
-    *max_localmem = local_mem_size / groups_per_core;
+    uint32_t localmem = *max_localmem;
+    if (localmem != 0) {
+      if (local_mem_size < localmem) {
+        printf("Error: device local memory size %lu is smaller than required %u\n", local_mem_size, localmem);
+        return -1;
+      }
+    } else {
+      *max_localmem = local_mem_size / blocks_per_core;
+    }
   }
 
+  return 0;
+}
+
+extern int vx_mpm_query(vx_device_h hdevice, uint32_t mpm_class, uint32_t addr, uint32_t core_id, uint64_t* value) {
+  if (!(addr >= VX_CSR_MPM_BASE && addr < (VX_CSR_MPM_BASE + 32))) {
+     printf("Error: invalid MPM CSR address: 0x%x\n", addr);
+     return -1;
+  }
+
+  auto read_one = [&](uint32_t cid, uint64_t* out) -> int {
+    uint32_t lo, hi;
+    uint32_t csr_id = addr - VX_CSR_MPM_BASE;
+    uint32_t clss_sh= mpm_class << (16+6);
+    uint32_t tag_lo = clss_sh | ((csr_id << 16) | cid);
+    uint32_t tag_hi = clss_sh | (((csr_id + 32) << 16) | cid);
+    CHECK_ERR(vx_dcr_read(hdevice, VX_DCR_BASE_MPM_VALUE, tag_lo, &lo), { return err; });
+    CHECK_ERR(vx_dcr_read(hdevice, VX_DCR_BASE_MPM_VALUE, tag_hi, &hi), { return err; });
+    *out = ((uint64_t)hi << 32) | lo;
+    return 0;
+  };
+
+  if (core_id == 0xffffffff) {
+    uint64_t num_cores;
+    CHECK_ERR(vx_dev_caps(hdevice, VX_CAPS_NUM_CORES, &num_cores), { return err; });
+    uint64_t sum = 0;
+    for (uint32_t i = 0; i < (uint32_t)num_cores; ++i) {
+      uint64_t cur;
+      CHECK_ERR(read_one(i, &cur), { return err; });
+      sum += cur;
+    }
+    *value = sum;
+  } else {
+    CHECK_ERR(read_one(core_id, value), { return err; });
+  }
   return 0;
 }

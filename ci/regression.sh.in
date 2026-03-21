@@ -33,15 +33,15 @@ unittest()
     make -C hw/unittest > /dev/null
 }
 
-isa()
+riscv()
 {
-    echo "begin isa tests..."
+    echo "begin riscv tests..."
 
     make -C sim/simx
     make -C sim/rtlsim
 
-    make -C tests/riscv/isa run-simx
-    make -C tests/riscv/isa run-rtlsim
+    make -C tests/riscv run-simx
+    make -C tests/riscv run-rtlsim
 
     CONFIGS="-DFPU_TYPE_FPNEW" make -C sim/rtlsim > /dev/null && make -C tests/riscv/isa run-rtlsim-32f
 
@@ -62,13 +62,14 @@ isa()
         CONFIGS="-DFPU_TYPE_DSP -DEXT_D_DISABLE" make -C sim/rtlsim > /dev/null && make -C tests/riscv/isa run-rtlsim-64fx
     fi
 
-    echo "isa tests done!"
+    echo "riscv tests done!"
 }
 
 kernel()
 {
     echo "begin kernel tests..."
 
+    make -C kernel
     make -C sim/simx
     make -C sim/rtlsim
 
@@ -82,6 +83,8 @@ regression()
 {
     echo "begin regression tests..."
 
+    make -C kernel
+    make -C runtime/stub
     make -C runtime/simx
     make -C runtime/rtlsim
 
@@ -113,6 +116,7 @@ dxa()
 {
     echo "begin dxa tests..."
 
+    make -C kernel
     make -C runtime/simx
     make -C runtime/rtlsim
 
@@ -121,8 +125,8 @@ dxa()
     CONFIGS="-DEXT_DXA_ENABLE" ./ci/blackbox.sh --driver=rtlsim --app=sgemm2_dxa --args="-n16 -t4 -m1"
 
     # single-core with L2 cache
-    CONFIGS="-DEXT_DXA_ENABLE -DL2_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm2_dxa --args="-n16 -t4 -m1"
-    CONFIGS="-DEXT_DXA_ENABLE -DL2_ENABLE" ./ci/blackbox.sh --driver=rtlsim --app=sgemm2_dxa --args="-n16 -t4 -m1"
+    CONFIGS="-DEXT_DXA_ENABLE -DL2_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm2_dxa --args="-n16 -t4 -m1" --perf=6
+    CONFIGS="-DEXT_DXA_ENABLE -DL2_ENABLE" ./ci/blackbox.sh --driver=rtlsim --app=sgemm2_dxa --args="-n16 -t4 -m1" --perf=6
 
     # multi-core with L2 cache
     CONFIGS="-DEXT_DXA_ENABLE -DNUM_DXA_UNITS=4 -DSTALL_TIMEOUT=1000000" ./ci/blackbox.sh --driver=simx --app=sgemm2_dxa --args="-n16 -t4 -m1" --cores=4
@@ -135,6 +139,8 @@ opencl()
 {
     echo "begin opencl tests..."
 
+    make -C kernel
+    make -C runtime/stub
     make -C runtime/simx
     make -C runtime/rtlsim
 
@@ -150,6 +156,8 @@ opencl()
 vm(){
     echo "begin vm tests..."
 
+    make -C kernel
+    make -C runtime/stub
     make -C runtime/simx clean && CONFIGS="-DVM_ENABLE" make -C runtime/simx
     make -C tests/opencl run-simx
     make -C tests/regression run-simx
@@ -164,6 +172,8 @@ vm(){
 cache()
 {
     echo "begin cache tests..."
+
+    make -C kernel
 
     # disable local memory
     CONFIGS="-DLMEM_DISABLE" ./ci/blackbox.sh --driver=rtlsim --app=demo --perf=1
@@ -220,6 +230,8 @@ cache()
 config1()
 {
     echo "begin configuration-1 tests..."
+
+    make -C kernel
 
     # warp/threads
     ./ci/blackbox.sh --driver=rtlsim --warps=1 --threads=1 --app=diverge
@@ -286,6 +298,8 @@ config1()
 config2()
 {
     echo "begin configuration-2 tests..."
+
+    make -C kernel
 
     # test opaesim
     ./ci/blackbox.sh --driver=opae --app=printf
@@ -390,6 +404,8 @@ debug()
 {
     echo "begin debugging tests..."
 
+    make -C kernel
+
     test_csv_trace32
 
     if [ "$XLEN" == "64" ]
@@ -410,6 +426,8 @@ scope()
 {
     echo "begin scope tests..."
 
+    make -C kernel
+
     SCOPE_DEPTH=128 ./ci/blackbox.sh --driver=opae --app=demo --args="-n1" --scope
     SCOPE_DEPTH=128 ./ci/blackbox.sh --driver=xrt --app=demo --args="-n1" --scope
 
@@ -419,6 +437,8 @@ scope()
 stress()
 {
     echo "begin stress tests..."
+
+    make -C kernel
 
     # test verilator reset values
     CONFIGS="-DVERILATOR_RESET_VALUE=1 -DSOCKET_SIZE=1 -DDCACHE_WRITEBACK=1 -DL2_WRITEBACK=1 -DL3_WRITEBACK=1" ./ci/blackbox.sh --driver=opae --cores=2 --clusters=2 --l2cache --l3cache --app=dogfood
@@ -449,6 +469,8 @@ vector()
 tensor()
 {
     echo "begin tensor tests..."
+
+    make -C kernel
 
     # simx tests
     make -C tests/regression/sgemm_tcu clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=int8 -DOTYPE=int32" make -C tests/regression/sgemm_tcu
@@ -598,6 +620,58 @@ tensor_sp()
 {
     echo "begin tensor sparse tests..."
 
+    make -C kernel
+
+    # simx tests (NT=2)
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=int8 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m4 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=uint8 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m4 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=int4 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m4 -n4 -k32"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=uint4 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m4 -n4 -k32"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=fp16 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m4 -n4 -k8"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=bf16 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m4 -n4 -k8"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=fp8 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m4 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=bf8 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m4 -n4 -k16"
+
+    # simx tests (NT=4)
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=int8 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m8 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=uint8 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m8 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=int4 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m8 -n4 -k32"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=uint4 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m8 -n4 -k32"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=fp16 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m8 -n4 -k8"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=bf16 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m8 -n4 -k8"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=fp8 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m8 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=bf8 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m8 -n4 -k16"
+
     # simx tests (NT=8)
     make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=8 -DITYPE=int8 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
     CONFIGS="-DNUM_THREADS=8 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m8 -n8 -k32"
@@ -672,6 +746,56 @@ tensor_sp()
 
     make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=32 -DITYPE=bf8 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
     CONFIGS="-DNUM_THREADS=32 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE" ./ci/blackbox.sh --driver=simx --app=sgemm_tcu_sp --args="-m16 -n16 -k64"
+
+    # rtlsim tests (NT=2)
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=int8 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m4 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=uint8 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m4 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=int4 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m4 -n4 -k32"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=uint4 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m4 -n4 -k32"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=fp16 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m4 -n4 -k8"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=bf16 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m4 -n4 -k8"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=fp8 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m4 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=2 -DITYPE=bf8 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=2 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m4 -n4 -k16"
+
+    # rtlsim tests (NT=4)
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=int8 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m8 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=uint8 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m8 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=int4 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m8 -n4 -k32"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=uint4 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m8 -n4 -k32"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=fp16 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m8 -n4 -k8"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=bf16 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m8 -n4 -k8"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=fp8 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m8 -n4 -k16"
+
+    make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=4 -DITYPE=bf8 -DOTYPE=fp32" make -C tests/regression/sgemm_tcu_sp
+    CONFIGS="-DNUM_THREADS=4 -DEXT_TCU_ENABLE -DTCU_SPARSE_ENABLE -DTCU_TYPE_DPI" ./ci/blackbox.sh --driver=rtlsim --app=sgemm_tcu_sp --args="-m8 -n4 -k16"
 
     # rtlsim tests (NT=8)
     make -C tests/regression/sgemm_tcu_sp clean && CONFIGS="-DNUM_THREADS=8 -DITYPE=int8 -DOTYPE=int32" make -C tests/regression/sgemm_tcu_sp
@@ -796,7 +920,7 @@ cupbop() {
 show_usage()
 {
     echo "Vortex Regression Test"
-    echo "Usage: $0 [--clean] [--unittest] [--isa] [--kernel] [--regression] [--dxa] [--opencl] [--cache] [--config1] [--config2] [--debug] [--scope] [--stress] [--synthesis] [--vector] [--tensor] [--tensor_sp] [--cupbop] [--all] [--h|--help]"
+    echo "Usage: $0 [--clean] [--unittest] [--riscv] [--kernel] [--regression] [--dxa] [--opencl] [--cache] [--config1] [--config2] [--debug] [--scope] [--stress] [--synthesis] [--vector] [--tensor] [--tensor_sp] [--cupbop] [--all] [--h|--help]"
 }
 
 declare -a tests=()
@@ -810,8 +934,8 @@ while [ "$1" != "" ]; do
         --unittest )
                 tests+=("unittest")
                 ;;
-        --isa )
-                tests+=("isa")
+        --riscv )
+                tests+=("riscv")
                 ;;
         --kernel )
                 tests+=("kernel")
@@ -864,7 +988,7 @@ while [ "$1" != "" ]; do
         --all )
                 tests=()
                 tests+=("unittest")
-                tests+=("isa")
+                tests+=("riscv")
                 tests+=("kernel")
                 tests+=("regression")
                 tests+=("dxa")

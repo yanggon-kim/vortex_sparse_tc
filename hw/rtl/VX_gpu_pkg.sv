@@ -85,6 +85,8 @@ package VX_gpu_pkg;
     localparam UOP_MAX = UOP_DXA + `EXT_DXA_ENABLED;
     localparam UOP_CTR_W = 8;
 
+    localparam CTA_TID_WIDTH = `UP(NW_BITS + NT_BITS);
+
 `ifndef NDEBUG
 	localparam UUID_WIDTH = 44;
 `elsif SCOPE
@@ -124,7 +126,7 @@ package VX_gpu_pkg;
     localparam MEM_FLAGS_WIDTH = (MEM_REQ_FLAG_LOCAL + `LMEM_ENABLED);
 
     localparam VX_DCR_ADDR_WIDTH = `VX_DCR_ADDR_BITS;
-    localparam VX_DCR_DATA_WIDTH = 32;
+    localparam VX_DCR_DATA_WIDTH = `VX_DCR_DATA_BITS;
 
 `ifdef STALL_TIMEOUT
     localparam STALL_TIMEOUT = `STALL_TIMEOUT;
@@ -534,10 +536,38 @@ package VX_gpu_pkg;
     } txbar_t;
 
     typedef struct packed {
-        logic [`XLEN-1:0]   startup_addr;
-        logic [`XLEN-1:0]   startup_arg;
-        logic [7:0]         mpm_class;
-    } base_dcrs_t;
+        logic                         rw;
+        logic [VX_DCR_ADDR_WIDTH-1:0] addr;
+        logic [VX_DCR_DATA_WIDTH-1:0] data;
+    } dcr_req_t;
+
+    typedef struct packed {
+        logic [VX_DCR_DATA_WIDTH-1:0] data;
+    } dcr_rsp_t;
+
+    typedef struct packed {
+        logic [PC_BITS-1:0] PC;
+        logic [31:0]      cta_id;
+        logic [2:0][31:0] block_idx;
+        logic [2:0][CTA_TID_WIDTH:0] block_dim;
+        logic [2:0][31:0] grid_dim;
+        logic [`MEM_ADDR_WIDTH-1:0] param;
+        logic [`LMEM_LOG_SIZE:0] lmem_size;
+        logic [CTA_TID_WIDTH:0] block_size;
+        logic [2:0][CTA_TID_WIDTH-1:0] warp_step;
+    } kmu_req_t;
+
+    typedef struct packed {
+        logic [31:0]      cta_id;
+        logic [NW_WIDTH-1:0] cta_rank;
+        logic [NW_WIDTH:0] cta_size;
+        logic [2:0][CTA_TID_WIDTH-1:0] thread_idx;
+        logic [2:0][31:0] block_idx;
+        logic [2:0][CTA_TID_WIDTH:0] block_dim;
+        logic [2:0][31:0] grid_dim;
+        logic [`MEM_ADDR_WIDTH-1:0] param;
+        logic [`MEM_ADDR_WIDTH-1:0] lmem_addr;
+    } cta_csrs_t;
 
     //////////////////////// instruction arguments ////////////////////////////
 
@@ -795,6 +825,16 @@ package VX_gpu_pkg;
         logic [PERF_CTR_BITS-1:0] latency;
     } mem_perf_t;
 
+`ifdef EXT_DXA_ENABLE
+    typedef struct packed {
+        logic [PERF_CTR_BITS-1:0] transfers;
+        logic [PERF_CTR_BITS-1:0] gmem_reads;
+        logic [PERF_CTR_BITS-1:0] gmem_dedup;
+        logic [PERF_CTR_BITS-1:0] smem_writes;
+        logic [PERF_CTR_BITS-1:0] gmem_latency;
+    } dxa_perf_t;
+`endif
+
     typedef struct packed {
         logic [PERF_CTR_BITS-1:0] idles;
         logic [PERF_CTR_BITS-1:0] active_warps;
@@ -825,6 +865,9 @@ package VX_gpu_pkg;
         lmem_perf_t  lmem;
         coalescer_perf_t coalescer;
         mem_perf_t   mem;
+    `ifdef EXT_DXA_ENABLE
+        dxa_perf_t   dxa;
+    `endif
     } sysmem_perf_t;
 
     typedef struct packed {
@@ -857,7 +900,7 @@ package VX_gpu_pkg;
     localparam LMEM_TAG_WIDTH       = `MAX(LMEM_TAG_WIDTH_BASE, DXA_DONE_TAG_REQ_W);
     // DXA shared-memory path is dimensioned independently from LSU scalar word size
     // to match the shared-memory service width per request path.
-    localparam DXA_SMEM_WORD_SIZE   = `LSU_LINE_SIZE;
+    localparam DXA_SMEM_WORD_SIZE   = `LMEM_NUM_BANKS * (`XLEN / 8);
     localparam DXA_SMEM_ADDR_WIDTH  = (`MEM_ADDR_WIDTH - `CLOG2(DXA_SMEM_WORD_SIZE));
 
     // New bank-native DXA SMEM interface params.
@@ -913,17 +956,24 @@ package VX_gpu_pkg;
     localparam DCACHE_TAG_ID_BITS   = (`CLOG2(`LSUQ_OUT_SIZE) + `CLOG2(DCACHE_MEM_BATCHES));
 
     // Core request tag bits
-    localparam DCACHE_TAG_WIDTH	    = (UUID_WIDTH + DCACHE_TAG_ID_BITS);
+    localparam DCACHE_CORE_TAG_WIDTH = (UUID_WIDTH + DCACHE_TAG_ID_BITS);
+
+    // Core request tag bits on dcache_bus_if port of VX_core (+1 for flush-arb sel bit)
+    localparam DCACHE_TAG_WIDTH	    = (DCACHE_CORE_TAG_WIDTH + 1);
 
     // Memory request data bits
     localparam DCACHE_MEM_DATA_WIDTH = (DCACHE_LINE_SIZE * 8);
 
-    // Memory request tag bits
+    // Memory request tag bits (computed with DCACHE_TAG_WIDTH since
+    // VX_cache_cluster sees the post-arb tag width)
 `ifdef DCACHE_ENABLE
     localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_NC_MEM_TAG_WIDTH(`DCACHE_MSHR_SIZE, `DCACHE_NUM_BANKS, DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES, UUID_WIDTH);
 `else
     localparam DCACHE_MEM_TAG_WIDTH = `CACHE_CLUSTER_BYPASS_MEM_TAG_WIDTH(DCACHE_NUM_REQS, `L1_MEM_PORTS, DCACHE_LINE_SIZE, DCACHE_WORD_SIZE, DCACHE_TAG_WIDTH, `SOCKET_SIZE, `NUM_DCACHES);
 `endif
+
+    // If dcache writeback is enabled, MSHR size must be large enough to track all outstanding requests
+    localparam DCACHE_MREQ_SIZE     = `DCACHE_WRITEBACK ? `DCACHE_MSHR_SIZE : `DCACHE_MREQ_SIZE;
 
     /////////////////////////////// L1 Parameters /////////////////////////////
 
@@ -973,6 +1023,9 @@ package VX_gpu_pkg;
     localparam L2_MEM_TAG_WIDTH     = `CACHE_BYPASS_TAG_WIDTH(L2_NUM_REQS, `L2_MEM_PORTS, `L2_LINE_SIZE, L2_WORD_SIZE, L2_TAG_WIDTH);
 `endif
 
+    // If L2 writeback is enabled, MSHR size must be large enough to track all outstanding requests
+    localparam L2_MREQ_SIZE         = `L2_WRITEBACK ? `L2_MSHR_SIZE : `L2_MREQ_SIZE;
+
     /////////////////////////////// L3 Parameters /////////////////////////////
 
     // Word size in bytes
@@ -993,6 +1046,8 @@ package VX_gpu_pkg;
 `else
     localparam L3_MEM_TAG_WIDTH     = `CACHE_BYPASS_TAG_WIDTH(L3_NUM_REQS, `L3_MEM_PORTS, `L3_LINE_SIZE, L3_WORD_SIZE, L3_TAG_WIDTH);
 `endif
+    // If L3 writeback is enabled, MSHR size must be large enough to track all outstanding requests
+    localparam L3_MREQ_SIZE         = `L3_WRITEBACK ? `L3_MSHR_SIZE : `L3_MREQ_SIZE;
 
     ///////////////////////////////////////////////////////////////////////////
 
