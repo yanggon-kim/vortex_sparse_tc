@@ -76,13 +76,13 @@ package VX_gpu_pkg;
 
     localparam BAR_ADDR_BITS = NW_BITS + NB_BITS;
     localparam BAR_ADDR_W = `UP(BAR_ADDR_BITS);
+    localparam BAR_ID_SHIFT = 8;
 
     localparam BAR_SIZE_W = `MAX(NW_WIDTH, NC_WIDTH);
 
     localparam UOP_PACKLD = 0;
     localparam UOP_TCU = UOP_PACKLD + 1;
-    localparam UOP_DXA = UOP_TCU + `EXT_TCU_ENABLED;
-    localparam UOP_MAX = UOP_DXA + `EXT_DXA_ENABLED;
+    localparam UOP_MAX = UOP_TCU + `EXT_TCU_ENABLED;
     localparam UOP_CTR_W = 8;
 
     localparam CTA_TID_WIDTH = `UP(NW_BITS + NT_BITS);
@@ -298,6 +298,9 @@ package VX_gpu_pkg;
     localparam INST_VOTE_BITS =  2;
     localparam INST_SHFL_BITS =  2;
 
+    // Warp-Level Lane Gather Extension
+    localparam INST_WGATHER =    4'h8; // ALU_TYPE_OTHER, alu_op[3]=1
+
     ///////////////////////////////////////////////////////////////////////////
 
     localparam INST_M_MUL =      3'b000;
@@ -409,6 +412,7 @@ package VX_gpu_pkg;
 `ifdef EXT_DXA_ENABLE
     localparam INST_SFU_DXA =    4'h9;
 `endif
+    localparam INST_SFU_WSYNC =  4'hA;
     localparam INST_SFU_BITS =   4;
 
     function automatic logic [3:0] inst_sfu_csr(input logic [2:0] funct3);
@@ -421,7 +425,8 @@ package VX_gpu_pkg;
             || (op == INST_SFU_SPLIT)
             || (op == INST_SFU_JOIN)
             || (op == INST_SFU_BAR)
-            || (op == INST_SFU_PRED);
+            || (op == INST_SFU_PRED)
+            || (op == INST_SFU_WSYNC);
     endfunction
 
     function automatic logic inst_sfu_is_csr(input logic [INST_SFU_BITS-1:0] op);
@@ -547,6 +552,7 @@ package VX_gpu_pkg;
 
     typedef struct packed {
         logic [PC_BITS-1:0] PC;
+        logic [7:0]       ctx_id;
         logic [31:0]      cta_id;
         logic [2:0][31:0] block_idx;
         logic [2:0][CTA_TID_WIDTH:0] block_dim;

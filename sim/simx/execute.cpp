@@ -27,6 +27,10 @@
 #include "instr.h"
 #include "core.h"
 #include "types.h"
+#ifdef EXT_DXA_ENABLE
+#include "socket.h"
+#include "cluster.h"
+#endif
 #ifdef EXT_V_ENABLE
 #include "processor_impl.h"
 #endif
@@ -387,6 +391,36 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
         } else {
           rd_data[t].i = rs1_data[t].i;
         }
+      }
+      rd_write = true;
+    },
+    [&](WgatherType /*wg_type*/) {
+      auto wgArgs = std::get<IntrWgatherArgs>(instrArgs);
+      uint32_t src_offset = wgArgs.src_lane; // group-relative source index (0-3)
+      // Pre-seed every source lane (one per group of 4) with its current rd value
+      // so the write-back path is a no-op for those lanes (rd_data is zero-initialized).
+      if (rdest.idx != 0) {
+        for (uint32_t t = thread_start; t < num_threads; ++t) {
+          if (!warp.tmask.test(t)) continue;
+          if ((t & 0x3u) == src_offset) {
+            rd_data[t].i = warp.ireg_file.at(rdest.idx).at(t);
+          }
+        }
+      }
+      for (uint32_t t = thread_start; t < num_threads; ++t) {
+        if (!warp.tmask.test(t))
+          continue;
+        uint32_t group_base = t & ~0x3u;          // round down to nearest multiple of 4
+        uint32_t sl         = group_base + src_offset; // absolute source lane for this group
+        uint32_t offset     = (t - sl) & 0x3u;    // offset within group, mod 4
+        if (offset == 1) {
+          rd_data[t].i = rs1_data[sl].i;
+        } else if (offset == 2) {
+          rd_data[t].i = rs2_data[sl].i;
+        } else if (offset == 3) {
+          rd_data[t].i = rs3_data[sl].i;
+        }
+        // offset == 0: source lane, already pre-seeded above
       }
       rd_write = true;
     },
@@ -1493,9 +1527,7 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
       case WctlType::BAR: {
         uint32_t arg1 = rs1_data[thread_last].u;
         uint32_t arg2 = rs2_data[thread_last].u;
-        uint32_t cta_no = arg1 & 0xffff;
-        uint32_t bar_no = (arg1 >> 16) & 0x7fff;
-        uint32_t bar_id = (cta_no * arch_.num_barriers() + bar_no) | (arg1 & 0x80000000);
+        uint32_t bar_id = bar_decode_id(arg1, arch_.num_barriers());
         trace->data = std::make_shared<BarTraceData>(bar_id, arg2, (bool)wctlArgs.is_sync_bar);
         if (wctlArgs.is_bar_arrive) {
           uint32_t phase = this->get_barrier_phase(bar_id);
@@ -1532,17 +1564,25 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
       }
     }
 #ifdef EXT_DXA_ENABLE
-    ,[&](DxaType dxa_type) {
-      auto dxaArgs = std::get<IntrDxaArgs>(instrArgs);
-      uint32_t dxa_op = dxaArgs.op;
-      (void)dxa_type;
-      // DXA runtime packetization is asynchronous and side-effected in SFU.
-      // This stage forwards raw operands.
+    ,[&](DxaType /*dxa_type*/) {
+      // Wgather-based DXA: all args packed into 4 lanes of a single instruction.
+      // Lane 0: rs1=smem_addr, rs2=coord2
+      // Lane 1: rs1=meta,      rs2=coord3
+      // Lane 2: rs1=coord0,    rs2=coord4
+      // Lane 3: rs1=coord1,    rs2=0
       trace->fetch_stall = false;
-      trace->data = std::make_shared<DxaCore::TraceData>(
-          rs1_data.at(thread_last).u,
-          rs2_data.at(thread_last).u,
-          dxa_op);
+      uint64_t smem_addr  = static_cast<uint64_t>(rs1_data.at(0).u);
+      uint32_t meta       = rs1_data.at(1).u;
+      uint32_t coords[5]  = { rs1_data.at(2).u, rs1_data.at(3).u,
+                               rs2_data.at(0).u, rs2_data.at(1).u,
+                               rs2_data.at(2).u };
+      uint32_t desc_slot  = meta & 0x0fu;
+      uint32_t raw_bar    = (meta >> 4) & 0x07ffffffu;
+      uint32_t bar_id     = bar_decode_id(raw_bar, core_->arch().num_barriers());
+      auto dxa_core = core_->socket()->cluster()->dxa_core();
+      auto td = dxa_core->execute_copy(core_, desc_slot, smem_addr, coords);
+      td->bar_id  = bar_id;
+      trace->data = td;
     }
 #endif
   #ifdef EXT_V_ENABLE
@@ -1600,49 +1640,32 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
     ,[&](TcuType tcu_type) {
       auto tpuArgs = std::get<IntrTcuArgs>(instrArgs);
       switch (tcu_type) {
-      case TcuType::WMMA: {
-        auto trace_data = std::make_shared<TensorUnit::ExeTraceData>();
-        trace->data = trace_data;
-        assert(operand_tmask.count() == num_threads);
-        core_->tensor_unit()->wmma(wid, tpuArgs.fmt_s, tpuArgs.fmt_d, tpuArgs.step_m, tpuArgs.step_n, tpuArgs.step_k, rs1_data, rs2_data, rs3_data, rd_data, trace_data.get());
-        rd_write = true;
-      } break;
-      case TcuType::WGMMA_LOAD: {
-        auto trace_data = std::make_shared<TensorUnit::ExeTraceData>();
-        trace->data = trace_data;
-        assert(operand_tmask.count() == num_threads);
-        core_->tensor_unit()->wgmma_load(wid, rs1_data, rs2_data, rs3_data, trace_data.get());
-      } break;
-      case TcuType::WMMA_RS: {
-        auto trace_data = std::make_shared<TensorUnit::ExeTraceData>();
-        trace->data = trace_data;
-        assert(operand_tmask.count() == num_threads);
-        std::vector<reg_data_t> rs1_staged;
-        std::vector<reg_data_t> rs1_pair_data;
-        std::vector<reg_data_t> rs2_staged;
-        core_->tensor_unit()->wgmma(wid, tpuArgs.fmt_s, tpuArgs.fmt_d, tpuArgs.step_m, tpuArgs.step_n, tpuArgs.step_k,
-                                    false, rs1_staged, rs1_pair_data, rs2_staged, rs3_data, rd_data, trace_data.get());
-        rd_write = true;
-      } break;
-      case TcuType::WMMA_SS: {
-        auto trace_data = std::make_shared<TensorUnit::ExeTraceData>();
-        trace->data = trace_data;
-        assert(operand_tmask.count() == num_threads);
-        std::vector<reg_data_t> rs1_staged;
-        std::vector<reg_data_t> rs1_pair_data;
-        std::vector<reg_data_t> rs2_staged;
-        core_->tensor_unit()->wgmma(wid, tpuArgs.fmt_s, tpuArgs.fmt_d, tpuArgs.step_m, tpuArgs.step_n, tpuArgs.step_k,
-                                    true, rs1_staged, rs1_pair_data, rs2_staged, rs3_data, rd_data, trace_data.get());
-        rd_write = true;
-      } break;
+      case TcuType::WMMA:
       case TcuType::WMMA_SP: {
         auto trace_data = std::make_shared<TensorUnit::ExeTraceData>();
         trace->data = trace_data;
         assert(operand_tmask.count() == num_threads);
-        assert(exec_tmask.any());
-        core_->tensor_unit()->wmma_sp(wid, tpuArgs.fmt_s, tpuArgs.fmt_d, tpuArgs.step_m, tpuArgs.step_n, tpuArgs.step_k, rs1_data, rs2_data, rs3_data, rd_data, trace_data.get());
+        bool is_sparse = (tcu_type == TcuType::WMMA_SP);
+        if (is_sparse) assert(exec_tmask.any());
+        core_->tensor_unit()->wmma(wid, tpuArgs.fmt_s, tpuArgs.fmt_d,
+                                   tpuArgs.step_m, tpuArgs.step_n, tpuArgs.step_k,
+                                   rs1_data, rs2_data, rs3_data, rd_data, trace_data.get(), is_sparse);
         rd_write = true;
       } break;
+  #ifdef TCU_WGMMA_ENABLE
+      case TcuType::WGMMA:
+      case TcuType::WGMMA_SP: {
+        auto trace_data = std::make_shared<TensorUnit::ExeTraceData>();
+        trace->data = trace_data;
+        assert(operand_tmask.count() == num_threads);
+        bool is_sparse_wg = (tcu_type == TcuType::WGMMA_SP);
+        core_->tensor_unit()->wgmma(wid, tpuArgs.fmt_s, tpuArgs.fmt_d,
+                                    tpuArgs.step_m, tpuArgs.step_n, tpuArgs.step_k,
+                                    rs2_data.at(0).u32, rs3_data.at(0).u32,
+                                    rs1_data, rd_data, trace_data.get(), is_sparse_wg);
+        rd_write = true;
+      } break;
+  #endif // TCU_WGMMA_ENABLE
       case TcuType::META_STORE: {
         auto trace_data = std::make_shared<TensorUnit::ExeTraceData>();
         trace->data = trace_data;
