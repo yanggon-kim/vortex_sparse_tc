@@ -28,6 +28,15 @@ namespace vt = tensor;
 
 ///////////////////////////////////////////////////////////////////////////////
 
+template <typename T>
+static void convert_row_to_col_major(T *dst, const T *src, uint32_t rows, uint32_t cols) {
+  for (uint32_t r = 0; r < rows; ++r) {
+    for (uint32_t c = 0; c < cols; ++c) {
+      dst[c * rows + r] = src[r * cols + c];
+    }
+  }
+}
+
 static void convert_row_to_col_major_4bit(uint8_t *dst, uint32_t width, uint32_t height, const uint8_t *src) {
   // Calculate output size and stride
   uint32_t out_bytes = (width * height + 1) / 2;
@@ -669,6 +678,7 @@ vx_device_h device = nullptr;
 vx_buffer_h A_buffer = nullptr;
 vx_buffer_h B_buffer = nullptr;
 vx_buffer_h C_buffer = nullptr;
+vx_buffer_h cycles_buffer = nullptr;
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
 kernel_arg_t kernel_arg = {};
@@ -707,6 +717,7 @@ void cleanup() {
     vx_mem_free(A_buffer);
     vx_mem_free(B_buffer);
     vx_mem_free(C_buffer);
+    vx_mem_free(cycles_buffer);
     vx_mem_free(krnl_buffer);
     vx_mem_free(args_buffer);
     vx_dev_close(device);
@@ -761,8 +772,11 @@ int main(int argc, char *argv[]) {
   size_t sizeA = M * K;
   size_t sizeB = K * N;
   size_t sizeC = M * N;
-  uint32_t grid_dim[2]  = {N / cfg::tileN, M / cfg::tileM};
-  uint32_t block_dim[2] = {(uint32_t)NT, 1};
+
+  kernel_arg.grid_dim[0] = N / cfg::tileN;
+  kernel_arg.grid_dim[1] = M / cfg::tileM;
+  kernel_arg.block_dim[0] = NT;
+  kernel_arg.block_dim[1] = 1;
 
   std::cout << "input data type: " << vt::ITYPE::name << " (id=" << vt::ITYPE::id << ")" << std::endl;
   std::cout << "output data type: " << vt::OTYPE::name << " (id=" << vt::OTYPE::id << ")" << std::endl;
@@ -785,6 +799,10 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_address(B_buffer, &kernel_arg.B_addr));
   RT_CHECK(vx_mem_alloc(device, sizeC * sizeof(otype_t), VX_MEM_WRITE, &C_buffer));
   RT_CHECK(vx_mem_address(C_buffer, &kernel_arg.C_addr));
+
+  uint32_t num_blocks = kernel_arg.grid_dim[0] * kernel_arg.grid_dim[1];
+  RT_CHECK(vx_mem_alloc(device, num_blocks * sizeof(uint32_t), VX_MEM_WRITE, &cycles_buffer));
+  RT_CHECK(vx_mem_address(cycles_buffer, &kernel_arg.cycles_addr));
 
   std::cout << "A_addr=0x" << std::hex << kernel_arg.A_addr << std::endl;
   std::cout << "B_addr=0x" << std::hex << kernel_arg.B_addr << std::endl;
@@ -818,7 +836,9 @@ int main(int argc, char *argv[]) {
       convert_row_to_col_major_4bit(h_B_col.data(), N, 2 * K, (uint8_t*)h_B.data());
       RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB));
     } else {
-      RT_CHECK(vx_copy_to_dev(B_buffer, h_B.data(), 0, sizeB * sizeof(itype_t)));
+      std::vector<itype_t> h_B_col(sizeB);
+      convert_row_to_col_major(h_B_col.data(), h_B.data(), K, N);
+      RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB * sizeof(itype_t)));
     }
   }
 
@@ -834,7 +854,7 @@ int main(int argc, char *argv[]) {
 
   // start device
   std::cout << "start device" << std::endl;
-  RT_CHECK(vx_start_wg(device, krnl_buffer, args_buffer, 2, grid_dim, block_dim, 0));
+  RT_CHECK(vx_start_wg(device, krnl_buffer, args_buffer, 2, kernel_arg.grid_dim, kernel_arg.block_dim, 0));
 
   // wait for completion
   std::cout << "wait for completion" << std::endl;
@@ -843,6 +863,15 @@ int main(int argc, char *argv[]) {
   auto time_end = std::chrono::high_resolution_clock::now();
   double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start).count();
   printf("Elapsed time: %lg ms\n", elapsed);
+
+  // read back TCU cycle counts
+  {
+    std::vector<uint32_t> h_cycles(num_blocks);
+    RT_CHECK(vx_copy_from_dev(h_cycles.data(), cycles_buffer, 0, num_blocks * sizeof(uint32_t)));
+    uint32_t max_cycles = 0;
+    for (auto c : h_cycles) max_cycles = std::max(max_cycles, c);
+    printf("TCU_CYCLES: max=%u (across %u blocks)\n", max_cycles, num_blocks);
+  }
 
   // download destination buffer
   std::vector<otype_t> h_C(sizeC);
