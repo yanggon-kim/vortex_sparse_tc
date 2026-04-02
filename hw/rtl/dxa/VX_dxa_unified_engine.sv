@@ -27,7 +27,8 @@ module VX_dxa_unified_engine import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
     VX_dxa_req_bus_if.slave cluster_dxa_bus_if[NUM_DXA_UNITS],
     VX_mem_bus_if.master dxa_gmem_bus_if[NUM_DXA_UNITS],
     VX_dxa_bank_wr_if.master dxa_smem_bank_wr_if[NUM_DXA_UNITS],
-    output wire [NUM_DXA_UNITS-1:0][NC_WIDTH-1:0] dxa_smem_core_id
+    output wire [NUM_DXA_UNITS-1:0][NC_WIDTH-1:0] dxa_smem_core_id,
+    output wire busy
 );
 
     localparam WORKER_BITS   = `CLOG2(NUM_DXA_UNITS);
@@ -266,7 +267,7 @@ module VX_dxa_unified_engine import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
         wire [NUM_DXA_UNITS-1:0][PERF_CTR_BITS-1:0] worker_perf_transfers;
         wire [NUM_DXA_UNITS-1:0][PERF_CTR_BITS-1:0] worker_perf_gmem_reads;
         wire [NUM_DXA_UNITS-1:0][PERF_CTR_BITS-1:0] worker_perf_gmem_dedup;
-        wire [NUM_DXA_UNITS-1:0][PERF_CTR_BITS-1:0] worker_perf_smem_writes;
+        wire [NUM_DXA_UNITS-1:0][PERF_CTR_BITS-1:0] worker_perf_lmem_writes;
         wire [NUM_DXA_UNITS-1:0][PERF_CTR_BITS-1:0] worker_perf_gmem_lt;
 `endif
 
@@ -311,7 +312,7 @@ module VX_dxa_unified_engine import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
                 .perf_transfers  (worker_perf_transfers[i]),
                 .perf_gmem_reads (worker_perf_gmem_reads[i]),
                 .perf_gmem_dedup (worker_perf_gmem_dedup[i]),
-                .perf_smem_writes(worker_perf_smem_writes[i]),
+                .perf_lmem_writes(worker_perf_lmem_writes[i]),
                 .perf_gmem_lt    (worker_perf_gmem_lt[i])
             `endif
             );
@@ -324,7 +325,7 @@ module VX_dxa_unified_engine import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
                 dxa_perf.transfers  += worker_perf_transfers[w];
                 dxa_perf.gmem_reads += worker_perf_gmem_reads[w];
                 dxa_perf.gmem_dedup += worker_perf_gmem_dedup[w];
-                dxa_perf.smem_writes+= worker_perf_smem_writes[w];
+                dxa_perf.lmem_writes+= worker_perf_lmem_writes[w];
                 dxa_perf.gmem_latency += worker_perf_gmem_lt[w];
             end
         end
@@ -334,13 +335,13 @@ module VX_dxa_unified_engine import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
         always @(posedge clk) begin
             if (~reset) begin
                 if (issue_fifo_enq) begin
-                    `TRACE(1, ("%t: %s issue-enq: input=%0d core=%0d wid=%0d bar=%0d desc=%0d\n",
+                    `TRACE(1, ("%t: %s issue-enq: input=%0d, core=%0d, wid=%0d, bar=%0d, desc=%0d\n",
                         $time, INSTANCE_ID, issue_grant_idx,
                         in_core_id[issue_grant_idx], in_wid[issue_grant_idx],
                         in_bar_addr[issue_grant_idx], in_desc_slot[issue_grant_idx]))
                 end
                 if (issue_dispatch) begin
-                    `TRACE(1, ("%t: %s dispatch-issue: worker=%0d core=%0d wid=%0d bar=%0d desc=%0d\n",
+                    `TRACE(1, ("%t: %s dispatch-issue: worker=%0d, core=%0d, wid=%0d, bar=%0d, desc=%0d\n",
                         $time, INSTANCE_ID, idle_worker_idx,
                         launch_core_id, launch_wid, launch_bar_addr, launch_desc_slot))
                     $write("DXA_TL,%0d,DISPATCH,core=%0d,wid=%0d,bar=%0d,worker=%0d,desc=%0d\n",
@@ -356,7 +357,11 @@ module VX_dxa_unified_engine import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
 
         `UNUSED_VAR (launch_ready_w)  // workers accept via launch_ready = ~active_r
 
+        // Busy while any input is valid, the issue FIFO has items, or any worker is running.
+        assign busy = (|in_valid) | issue_fifo_out_valid | ~(&worker_idle);
+
     end else begin : g_dxa_unified_off
+        assign busy = 1'b0;
         for (genvar i = 0; i < NUM_DXA_UNITS; ++i) begin : g_dxa_off
             assign cluster_dxa_bus_if[i].req_ready = 1'b1;
 `ifdef PERF_ENABLE

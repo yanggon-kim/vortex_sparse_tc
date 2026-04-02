@@ -10,7 +10,7 @@ extern "C" void kernel_main(kernel_arg_t *__UNIFORM__ arg) {
   auto pA = reinterpret_cast<ctx::input_t *>(arg->A_addr);
   auto pB = reinterpret_cast<ctx::input_t *>(arg->B_addr);
   auto pC = reinterpret_cast<ctx::output_t *>(arg->C_addr);
-  auto pMetaBase = reinterpret_cast<const float *>(arg->meta_addr);
+  auto pMetaSpBase = reinterpret_cast<const float *>(arg->meta_sp_addr);
 
   uint32_t M = arg->M;
   uint32_t N = arg->N;
@@ -24,8 +24,7 @@ extern "C" void kernel_main(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t tile_col = blockIdx.x * ctx::tileN;
 
   ctx::fill_fragment(fragC, 0);
-
-  uint32_t start_cycles = csr_read(VX_CSR_MCYCLE);
+  uint32_t cycles = 0;
 
   // Per-K-tile metadata reload
   constexpr uint32_t rtl_i_ratio = 32 / vt::ITYPE::bits;
@@ -40,16 +39,19 @@ extern "C" void kernel_main(kernel_arg_t *__UNIFORM__ arg) {
 
   uint32_t stride_A = K / 2;
 
-  auto pMeta = pMetaBase + tile_row_idx * num_k_tiles * per_k_tile_words;
+  auto pMetaSp = pMetaSpBase + tile_row_idx * num_k_tiles * per_k_tile_words;
   auto pTileA = pA + tile_row * stride_A;
   constexpr uint32_t a_k_stride = ctx::tileK / 2;
 
   auto pTileB = pB + tile_col * K;
   for (int i = 0; i < (int)K; i += (int)ctx::tileK) {
-    ctx::load_matrix_sync<vt::row_major>(fragA, pTileA, stride_A, pMeta);
+    ctx::load_matrix_sync<vt::row_major>(fragA, pTileA, stride_A, nullptr, pMetaSp);
     ctx::load_matrix_sync<vt::col_major>(fragB, pTileB, K);
+    __rdcycle_time t0 = vx_rdcycle_sync_begin();
     ctx::mma_sync(fragC, fragA, fragB, fragC);
-    pMeta += per_k_tile_words;
+    __rdcycle_time t1 = vx_rdcycle_sync_end();
+    cycles += vx_rdcycle_sync_diff(t0, t1);
+    pMetaSp += per_k_tile_words;
     pTileA += a_k_stride;
     pTileB += ctx::tileK;
   }
@@ -57,11 +59,8 @@ extern "C" void kernel_main(kernel_arg_t *__UNIFORM__ arg) {
   auto pTileC = pC + tile_row * N + tile_col;
   ctx::store_matrix_sync(pTileC, fragC, N);
 
-  uint32_t end_cycles = csr_read(VX_CSR_MCYCLE);
-
   // Write per-block cycle count
   auto pCycles = reinterpret_cast<uint32_t*>(arg->cycles_addr);
   uint32_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
-  pCycles[block_id] = end_cycles - start_cycles;
+  pCycles[block_id] = cycles;
 }
-

@@ -14,7 +14,7 @@ RTL_INCLUDE +=
 DBG_FLAGS += -DDEBUG_LEVEL=$(DEBUG) -DVCD_OUTPUT $(DBG_TRACE_FLAGS)
 
 VL_FLAGS += --exe
-VL_FLAGS += --language 1800-2009 --assert -Wall -Wpedantic
+VL_FLAGS += --language 1800-2012 --assert -Wall -Wpedantic
 VL_FLAGS += -Wno-DECLFILENAME -Wno-REDEFMACRO -Wno-GENUNNAMED
 VL_FLAGS += --x-initial unique --x-assign unique
 VL_FLAGS += ../verilator.vlt
@@ -49,6 +49,12 @@ endif
 ifdef PERF
 	VL_FLAGS += -DPERF_ENABLE
 	CXXFLAGS += -DPERF_ENABLE
+endif
+
+# Enable SAIF tracing
+ifdef SAIF
+	VL_FLAGS += --trace-saif
+	CXXFLAGS += -DSAIF_OUTPUT
 endif
 
 all: $(DESTDIR)/$(PROJECT)

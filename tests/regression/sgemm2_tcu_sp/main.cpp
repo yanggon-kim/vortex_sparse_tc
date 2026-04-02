@@ -28,7 +28,7 @@ using namespace vortex;
 namespace vt = tensor;
 
 // WGMMA geometry: same template as the kernel context (NR=32)
-using wg_cfg_t = vt::wmma_config_t<NUM_THREADS, vt::fp32, vt::fp32, 4, 32>;
+using wg_cfg_t = vt::wmma_config_t<NUM_THREADS, vt::fp32, vt::fp32, 32, 8>;
 
 // Sparse parameters based on runtime format (fp16)
 static constexpr uint32_t kRtlIRatio     = 32 / vt::fp16::bits;           // 2
@@ -240,7 +240,7 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, sizeC * sizeof(otype_t), VX_MEM_WRITE, &C_buffer));
   RT_CHECK(vx_mem_address(C_buffer, &kernel_arg.C_addr));
   RT_CHECK(vx_mem_alloc(device, meta_words * sizeof(uint32_t), VX_MEM_READ, &meta_buffer));
-  RT_CHECK(vx_mem_address(meta_buffer, &kernel_arg.meta_addr));
+  RT_CHECK(vx_mem_address(meta_buffer, &kernel_arg.meta_sp_addr));
 
   // generate dense A and B
   std::vector<itype_t> h_A_full(sizeA_full);
@@ -284,11 +284,15 @@ int main(int argc, char *argv[]) {
   std::cout << "upload kernel argument" << std::endl;
   RT_CHECK(vx_upload_bytes(device, &kernel_arg, sizeof(kernel_arg_t), &args_buffer));
 
-  // smem: [A_compressed][meta][B_dense]
+  // smem: [A_compressed][meta_padded][B_dense]
+  // B must start at a bank-row boundary (NUM_THREADS * 4 bytes) for the
+  // tile-buffer fetch engine, which discards intra-row address bits.
   uint32_t smem_a_bytes    = tileM * (tileK_elem / 2) * sizeof(itype_t);
   uint32_t smem_meta_bytes = kWgMetaBanks * kMetaStrWords * 4;
   uint32_t smem_b_bytes    = tileK_elem * tileN * sizeof(itype_t);
-  uint32_t smem_size       = smem_a_bytes + smem_meta_bytes + smem_b_bytes;
+  uint32_t smem_bank_bytes = NUM_THREADS * sizeof(float);
+  uint32_t smem_b_off      = ((smem_a_bytes + smem_meta_bytes + smem_bank_bytes - 1) / smem_bank_bytes) * smem_bank_bytes;
+  uint32_t smem_size       = smem_b_off + smem_b_bytes;
 
   auto time_start = std::chrono::high_resolution_clock::now();
 

@@ -31,9 +31,17 @@ public:
 
 	struct PerfStats {
 		uint64_t latency = 0;
+		uint64_t tbuf_fetch_stalls = 0;
+		uint64_t wgmma_instrs = 0; // WGMMA µops executed
+		uint64_t wgmma_stalls = 0; // not cycle-accurate in simx (always 0)
+		uint64_t lmem_reads   = 0; // LMEM read transactions per wgmma() call
 
 		PerfStats& operator+=(const PerfStats& rhs) {
-			this->latency += rhs.latency;
+			this->latency          += rhs.latency;
+			this->tbuf_fetch_stalls += rhs.tbuf_fetch_stalls;
+			this->wgmma_instrs     += rhs.wgmma_instrs;
+			this->wgmma_stalls     += rhs.wgmma_stalls;
+			this->lmem_reads       += rhs.lmem_reads;
 			return *this;
 		}
 	};
@@ -57,6 +65,14 @@ public:
 	          const std::vector<reg_data_t>& rs1_data,
 	          const std::vector<reg_data_t>& rs2_data,
 	          const std::vector<reg_data_t>& rs3_data,
+	          const std::vector<reg_data_t>& mx_a0_data,
+	          const std::vector<reg_data_t>& mx_a1_data,
+	          const std::vector<reg_data_t>& mx_a2_data,
+	          const std::vector<reg_data_t>& mx_a3_data,
+	          const std::vector<reg_data_t>& mx_b0_data,
+	          const std::vector<reg_data_t>& mx_b1_data,
+	          const std::vector<reg_data_t>& mx_b2_data,
+	          const std::vector<reg_data_t>& mx_b3_data,
 	          std::vector<reg_data_t>& rd_data,
 	          ExeTraceData* trace_data,
 	          bool is_sparse);

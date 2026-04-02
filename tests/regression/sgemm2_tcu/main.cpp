@@ -26,26 +26,6 @@
 using namespace vortex;
 namespace vt = tensor;
 
-static inline uint64_t desc_encode_field(uint64_t x) {
-  return (x & 0x3fffu);
-}
-
-static inline uint64_t make_smem_desc(uint64_t base_addr,
-                                      uint32_t leading_byte_offset,
-                                      uint32_t stride_byte_offset,
-                                      uint32_t swizzle = 0) {
-  if (base_addr > 0xffffffffull) {
-    std::cout << "Error: descriptor base address exceeds 32-bit range" << std::endl;
-    std::abort();
-  }
-  uint64_t desc = 0;
-  desc |= (base_addr & 0xffffffffull);
-  desc |= (desc_encode_field(leading_byte_offset) & 0x3fffull) << 32;
-  desc |= (desc_encode_field(stride_byte_offset) & 0x3fffull) << 46;
-  desc |= (uint64_t(swizzle) & 0x3ull) << 62;
-  return desc;
-}
-
 ///////////////////////////////////////////////////////////////////////////////
 
 static void convert_row_to_col_major_4bit(uint8_t *dst, uint32_t width, uint32_t height, const uint8_t *src) {
@@ -128,24 +108,6 @@ struct data_accessor_t<vt::uint4> {
   }
 };
 
-template <>
-struct data_accessor_t<vt::nvfp4> {
-  static uint8_t read(const uint8_t *ptr, uint32_t offset) {
-    uint32_t row_off = offset / 2;
-    bool odd = offset & 0x1;
-    uint8_t value8 = ptr[row_off];
-    return odd ? (value8 >> 4) : (value8 & 0x0f); // extract nibble
-  }
-  static void write(uint8_t *ptr, uint32_t offset, uint8_t value) {
-    uint32_t row_off = offset / 2;
-    bool odd = offset & 0x1;
-    uint8_t old_value = ptr[row_off];
-    uint8_t new_value = odd ? ((old_value & 0x0f) | (value << 4))
-                            : ((old_value & 0xf0) | (value & 0x0f));
-    ptr[offset / 2] = new_value;
-  }
-};
-
 ///////////////////////////////////////////////////////////////////////////////
 
 template <typename Type>
@@ -209,23 +171,6 @@ public:
     return (uint8_t)rand(); // store 2 nibbles in a byte
   }
   static bool compare(uint8_t a, uint8_t b, int index, int errors) {
-    if (a != b) {
-      if (errors < MAX_ERRORS) {
-        printf("*** error: [%d] expected=0x%x, actual=0x%x\n", index, b, a);
-      }
-      return false;
-    }
-    return true;
-  }
-};
-
-template <>
-class Comparator<vt::mxint8> {
-public:
-  static int8_t generate() {
-    return (int8_t)(rand() % 256 - 128);
-  }
-  static bool compare(int8_t a, int8_t b, int index, int errors) {
     if (a != b) {
       if (errors < MAX_ERRORS) {
         printf("*** error: [%d] expected=0x%x, actual=0x%x\n", index, b, a);
@@ -343,58 +288,6 @@ public:
   }
 };
 
-// TODO: temp arbitrarily hardcoded scale factors
-constexpr uint8_t SCALE_FACTOR_E8M0_A = 129;  // val = 4, bias = 127
-constexpr uint8_t SCALE_FACTOR_E8M0_B = 131;  // val = 16
-constexpr uint8_t SCALE_FACTOR_E4M3_A = 0x41; // val = 2.25, bias = 7
-constexpr uint8_t SCALE_FACTOR_E4M3_B = 0x33; // val = 0.6875
-
-template <>
-class Comparator<vt::mxfp8> {
-public:
-  static uint8_t generate() {
-    return generate_with_scale(SCALE_FACTOR_E8M0_A);
-  }
-
-  static uint8_t generate_with_scale(uint8_t scale_factor) {
-    auto fvalue = float(rand()) / RAND_MAX;
-    return rv_ftomxfp8_s(bit_cast<uint32_t>(fvalue), scale_factor, 0, nullptr);
-  }
-
-  static bool compare(uint8_t a, uint8_t b, int index, int errors) {
-    if (a != b) {
-      if (errors < MAX_ERRORS) {
-        printf("*** error: [%d] expected=0x%x, actual=0x%x\n", index, b, a);
-      }
-      return false;
-    }
-    return true;
-  }
-};
-
-template <>
-class Comparator<vt::nvfp4> {
-public:
-  static uint8_t generate() {
-    return generate_with_scale(SCALE_FACTOR_E4M3_A);
-  }
-
-  static uint8_t generate_with_scale(uint8_t scale_factor) {
-    auto fvalue = float(rand()) / RAND_MAX;
-    return rv_ftonvfp4_s(bit_cast<uint32_t>(fvalue), scale_factor, 0, nullptr);
-  }
-
-  static bool compare(uint8_t a, uint8_t b, int index, int errors) {
-    if (a != b) {
-      if (errors < MAX_ERRORS) {
-        printf("*** error: [%d] expected=0x%x, actual=0x%x\n", index, b, a);
-      }
-      return false;
-    }
-    return true;
-  }
-};
-
 template <>
 class Comparator<vt::fp32> {
 public:
@@ -402,8 +295,7 @@ public:
     return static_cast<float>(rand()) / RAND_MAX;
   }
   static bool compare(float a, float b, int index, int errors) {
-    if constexpr (std::is_same<vt::ITYPE, vt::fp8>::value || std::is_same<vt::ITYPE, vt::bf8>::value ||
-                  std::is_same<vt::ITYPE, vt::mxfp8>::value || std::is_same<vt::ITYPE, vt::nvfp4>::value) {
+    if constexpr (std::is_same<vt::ITYPE, vt::fp8>::value || std::is_same<vt::ITYPE, vt::bf8>::value) {
       if (a == 0.0f && b == 0.0f) {
         return true;
       }
@@ -548,52 +440,6 @@ struct muladd_t<vt::tf32, vt::tf32> {
 };
 
 template <>
-struct muladd_t<vt::mxfp8, vt::fp32> {
-  static float eval(uint8_t a, uint8_t b, float c) {
-    constexpr uint8_t sf_a = SCALE_FACTOR_E8M0_A;
-    constexpr uint8_t sf_b = SCALE_FACTOR_E8M0_B;
-    auto fa = bit_cast<float>(rv_mxfp8tof_s(a, sf_a, 0, nullptr));
-    auto fb = bit_cast<float>(rv_mxfp8tof_s(b, sf_b, 0, nullptr));
-    return fa * fb + c;
-  }
-};
-
-template <>
-struct muladd_t<vt::mxfp8, vt::mxfp8> {
-  static uint8_t eval(uint8_t a, uint8_t b, uint8_t c) {
-    constexpr uint8_t sf = SCALE_FACTOR_E8M0_A;
-    auto fa = bit_cast<float>(rv_mxfp8tof_s(a, sf, 0, nullptr));
-    auto fb = bit_cast<float>(rv_mxfp8tof_s(b, sf, 0, nullptr));
-    auto fc = bit_cast<float>(rv_mxfp8tof_s(c, sf, 0, nullptr));
-    auto fd = fa * fb + fc;
-    return rv_ftomxfp8_s(bit_cast<uint32_t>(fd), sf, 0, nullptr);
-  }
-};
-
-template <>
-struct muladd_t<vt::nvfp4, vt::fp32> {
-  static float eval(uint8_t a, uint8_t b, float c) {
-    constexpr uint8_t sf_a = SCALE_FACTOR_E4M3_A;
-    constexpr uint8_t sf_b = SCALE_FACTOR_E4M3_B;
-    auto fa = bit_cast<float>(rv_nvfp4tof_s(a, sf_a, 0, nullptr));
-    auto fb = bit_cast<float>(rv_nvfp4tof_s(b, sf_b, 0, nullptr));
-    return fa * fb + c;
-  }
-};
-
-template <>
-struct muladd_t<vt::nvfp4, vt::nvfp4> {
-  static uint8_t eval(uint8_t a, uint8_t b, uint8_t c) {
-    constexpr uint8_t sf = SCALE_FACTOR_E4M3_A;
-    auto fa = bit_cast<float>(rv_nvfp4tof_s(a, sf, 0, nullptr));
-    auto fb = bit_cast<float>(rv_nvfp4tof_s(b, sf, 0, nullptr));
-    auto fc = bit_cast<float>(rv_nvfp4tof_s(c, sf, 0, nullptr));
-    auto fd = fa * fb + fc;
-    return rv_ftonvfp4_s(bit_cast<uint32_t>(fd), sf, 0, nullptr);
-  }
-};
-
-template <>
 struct muladd_t<vt::int4, vt::int32> {
   static int32_t eval(uint8_t a, uint8_t b, int32_t c) {
     int32_t a_val = a & 0xF;
@@ -617,45 +463,19 @@ struct muladd_t<vt::uint4, vt::int32> {
   }
 };
 
-template <>
-struct muladd_t<vt::mxint8, vt::int32> {
-  static int32_t eval(int8_t a, int8_t b, int32_t c) {
-    constexpr uint8_t sf_a = SCALE_FACTOR_E8M0_A;
-    constexpr uint8_t sf_b = SCALE_FACTOR_E8M0_B;
-    int32_t scale_exp_a = (int32_t)sf_a - 133;
-    float scale_factor_a = std::ldexp(1.0f, scale_exp_a);
-    int32_t scale_exp_b = (int32_t)sf_b - 133;
-    float scale_factor_b = std::ldexp(1.0f, scale_exp_b);
-    float product = (float)a * scale_factor_a * (float)b * scale_factor_b;
-    return (int32_t)product + c;
-  }
-};
-
 template<typename T>
 inline typename T::dtype generate_A_value() {
-  if constexpr (std::is_same_v<T, vt::mxfp8>) {
-    return Comparator<T>::generate_with_scale(SCALE_FACTOR_E8M0_A);
-  } else if constexpr (std::is_same_v<T, vt::nvfp4>) {
-    return Comparator<T>::generate_with_scale(SCALE_FACTOR_E4M3_A);
-  } else {
-    return Comparator<T>::generate();
-  }
+  return Comparator<T>::generate();
 }
 
 template<typename T>
 inline typename T::dtype generate_B_value() {
-  if constexpr (std::is_same_v<T, vt::mxfp8>) {
-    return Comparator<T>::generate_with_scale(SCALE_FACTOR_E8M0_B);
-  } else if constexpr (std::is_same_v<T, vt::nvfp4>) {
-    return Comparator<T>::generate_with_scale(SCALE_FACTOR_E4M3_B);
-  } else {
-    return Comparator<T>::generate();
-  }
+  return Comparator<T>::generate();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
 
-using cfg = vt::wmma_config_t<NUM_THREADS, vt::ITYPE, vt::OTYPE, 4, 32>; // NR=32 matches WGMMA kernel context
+using cfg = vt::wmma_config_t<NUM_THREADS, vt::ITYPE, vt::OTYPE, 32, 8>;
 
 using itype_t = typename vt::ITYPE::dtype;
 using otype_t = typename vt::OTYPE::dtype;
@@ -681,10 +501,10 @@ static void matmul_cpu(otype_t *C, const itype_t *A, const itype_t *B, uint32_t 
 
 const char *kernel_file = "kernel.vxbin";
 
-uint32_t xm = 32;
-uint32_t xn = 32;
+uint32_t xm = 64;
+uint32_t xn = 64;
 uint32_t xk = 32;
-uint32_t mode = 0;
+uint32_t warps = 4;
 
 vx_device_h device = nullptr;
 vx_buffer_h A_buffer = nullptr;
@@ -696,7 +516,7 @@ kernel_arg_t kernel_arg = {};
 
 static void show_usage() {
   std::cout << "Vortex Sgemm TCU2 Test." << std::endl;
-  std::cout << "Usage: [-m: m] [-n: N] [-k: K] [-w: mode(0=RS,1=SS)] [-h: help]" << std::endl;
+  std::cout << "Usage: [-m: m] [-n: N] [-k: K] [-w: warps] [-h: help]" << std::endl;
 }
 
 static void parse_args(int argc, char **argv) {
@@ -713,7 +533,7 @@ static void parse_args(int argc, char **argv) {
       xk = atoi(optarg);
       break;
     case 'w':
-      mode = atoi(optarg);
+      warps = atoi(optarg);
       break;
     case 'h':
       show_usage();
@@ -759,7 +579,14 @@ int main(int argc, char *argv[]) {
   uint64_t NT;
   RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_THREADS, &NT));
   if (NT != NUM_THREADS) {
-    std::cout << "Error: device warp size (" << NT << ") must match NUM_THREADS=" << NUM_THREADS << "!" << std::endl;
+    std::cout << "Error: device thread size (" << NT << ") must match NUM_THREADS=" << NUM_THREADS << "!" << std::endl;
+    return -1;
+  }
+
+  uint64_t num_warps;
+  RT_CHECK(vx_dev_caps(device, VX_CAPS_NUM_WARPS, &num_warps));
+  if (warps > num_warps) {
+    std::cout << "Error: requested warps (" << warps << ") exceeds device's capacity (" << num_warps << ")" << std::endl;
     return -1;
   }
 
@@ -767,23 +594,18 @@ int main(int argc, char *argv[]) {
   uint32_t N = xn;
   uint32_t K = xk;
 
-  if (mode > 1) {
-    std::cout << "Error: mode must be 0 (RS) or 1 (SS)!" << std::endl;
-    return -1;
-  }
-
   if ((M % cfg::tileM) != 0) {
-    std::cout << "Error: M must be a multiple of tensor tileM=" << cfg::tileM << "!" << std::endl;
+    std::cout << "Error: M (" << M << ") must be a multiple of tensor tileM=" << cfg::tileM << "!" << std::endl;
     return -1;
   }
 
   if ((N % cfg::tileN) != 0) {
-    std::cout << "Error: N must be a multiple of tensor tileN=" << cfg::tileN << "!" << std::endl;
+    std::cout << "Error: N (" << N << ") must be a multiple of tensor tileN=" << cfg::tileN << "!" << std::endl;
     return -1;
   }
 
   if ((K % cfg::tileK) != 0) {
-    std::cout << "Error: K must be a multiple of tensor tileK=" << cfg::tileK << "!" << std::endl;
+    std::cout << "Error: K (" << K << ") must be a multiple of tensor tileK=" << cfg::tileK << "!" << std::endl;
     return -1;
   }
 
@@ -791,22 +613,22 @@ int main(int argc, char *argv[]) {
   size_t sizeB = K * N;
   size_t sizeC = M * N;
   uint32_t grid_dim[2]  = {N / cfg::tileN, M / cfg::tileM};
-  uint32_t block_dim[2] = {(uint32_t)NT, 1};
+  uint32_t block_dim[2] = {warps * (uint32_t)NT, 1};
 
   std::cout << "input data type: " << vt::ITYPE::name << " (id=" << vt::ITYPE::id << ")" << std::endl;
   std::cout << "output data type: " << vt::OTYPE::name << " (id=" << vt::OTYPE::id << ")" << std::endl;
   std::cout << "WMMA Core Dimension: M=" << cfg::tcM << ", N=" << cfg::tcN << ", K=" << cfg::tcK << std::endl;
   std::cout << "WMMA Tile Dimension: M=" << cfg::tileM << ", N=" << cfg::tileN << ", K=" << cfg::tileK << std::endl;
+  std::cout << "Grid dimension: " << grid_dim[0] << "x" << grid_dim[1] << std::endl;
+  std::cout << "Block dimension: " << block_dim[0] << "x" << block_dim[1] << std::endl;
   std::cout << "matrix A: " << M << "x" << K << std::endl;
   std::cout << "matrix B: " << K << "x" << N << std::endl;
   std::cout << "matrix C: " << M << "x" << N << std::endl;
-  std::cout << "WGMMA source mode: " << ((mode == 0) ? "RS" : "SS") << std::endl;
 
   // set matrix dimensions
   kernel_arg.M = M;
   kernel_arg.N = N;
   kernel_arg.K = K;
-  kernel_arg.mode = mode;
 
   // allocate device memory
   std::cout << "allocate device memory" << std::endl;
@@ -820,26 +642,6 @@ int main(int argc, char *argv[]) {
   std::cout << "A_addr=0x" << std::hex << kernel_arg.A_addr << std::endl;
   std::cout << "B_addr=0x" << std::hex << kernel_arg.B_addr << std::endl;
   std::cout << "C_addr=0x" << std::hex << kernel_arg.C_addr << std::endl;
-
-  // Build matrix descriptors: K movement uses leading byte offset,
-  // tile-row/tile-col movement uses stride byte offset.
-  uint32_t a_leading_bytes = cfg::tileK * sizeof(itype_t);
-  uint32_t a_stride_bytes = cfg::tileM * K * sizeof(itype_t);
-  auto a_desc = make_smem_desc(kernel_arg.A_addr, a_leading_bytes, a_stride_bytes);
-
-  uint32_t b_leading_bytes = cfg::tileK * sizeof(itype_t);
-  uint32_t b_stride_bytes = cfg::tileN * K * sizeof(itype_t);
-  if constexpr (vt::ITYPE::bits >= 8) {
-    b_leading_bytes = cfg::tileK * N * sizeof(itype_t);
-    b_stride_bytes = cfg::tileN * sizeof(itype_t);
-  }
-  auto b_desc = make_smem_desc(kernel_arg.B_addr, b_leading_bytes, b_stride_bytes);
-
-  kernel_arg.A_desc = a_desc;
-  kernel_arg.B_desc = b_desc;
-
-  std::cout << "A_desc=0x" << std::hex << kernel_arg.A_desc << std::endl;
-  std::cout << "B_desc=0x" << std::hex << kernel_arg.B_desc << std::endl;
 
   // generate source data
   std::vector<itype_t> h_A(sizeA);
@@ -861,8 +663,7 @@ int main(int argc, char *argv[]) {
   {
     std::cout << "upload matrix B buffer" << std::endl;
     if constexpr (std::is_same<vt::ITYPE, vt::int4>::value ||
-                  std::is_same<vt::ITYPE, vt::uint4>::value ||
-                  std::is_same<vt::ITYPE, vt::nvfp4>::value) {
+                  std::is_same<vt::ITYPE, vt::uint4>::value) {
       // sub-byte matrix B must be in col-major format
       // we convert the 4-bit row-major to col-major here
       std::vector<uint8_t> h_B_col(sizeB);

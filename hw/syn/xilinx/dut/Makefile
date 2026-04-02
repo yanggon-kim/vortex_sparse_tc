@@ -5,7 +5,10 @@ PREFIX ?= build
 
 BUILD_DIR := $(PREFIX)
 
-.PHONY: unittest scope mem_unit lmem cache fpu tcu core issue vortex top
+SAIF_FILE ?=
+SAIF_INST ?=
+
+.PHONY: unittest scope mem_unit lmem cache fpu tcu dxa core issue vortex top
 
 unittest:
 	mkdir -p unittest/$(BUILD_DIR)
@@ -61,3 +64,17 @@ top:
 	mkdir -p top/$(BUILD_DIR)
 	cp top/Makefile top/$(BUILD_DIR)
 	$(MAKE) -C top/$(BUILD_DIR) clean && $(MAKE) -C top/$(BUILD_DIR) > top/$(BUILD_DIR)/build.log 2>&1 &
+
+dxa:
+	mkdir -p dxa/$(BUILD_DIR)
+	cp dxa/Makefile dxa/$(BUILD_DIR)
+	$(MAKE) -C dxa/$(BUILD_DIR) clean && $(MAKE) -C dxa/$(BUILD_DIR) > dxa/$(BUILD_DIR)/build.log 2>&1 &
+
+# Re-run power analysis on an existing build without rebuilding the design.
+# Usage: make <target>-power SAIF_FILE=<saif-path> [SAIF_INST=<top-module-instance-path>]
+%-power:
+	@target=$*; \
+	if [ ! -d $$target/$(BUILD_DIR) ]; then \
+	  echo "ERROR: $$target/$(BUILD_DIR) not found. Run 'make $$target' first."; exit 1; \
+	fi
+	$(MAKE) -C $*/$(BUILD_DIR) power SAIF_FILE=$(SAIF_FILE) SAIF_INST=$(SAIF_INST)

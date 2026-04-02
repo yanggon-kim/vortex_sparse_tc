@@ -6,8 +6,6 @@ CONFIG_FILE := $(DESTDIR)/opaesim_config.stamp
 SRC_DIR := $(VORTEX_HOME)/sim/opaesim
 AFU_DIR := $(RTL_DIR)/afu/opae
 
-XCONFIGS := $(shell python3 $(ROOT_DIR)/ci/gen_config.py --config $(VORTEX_HOME)/hw/VX_config.toml --cflags '-DSV_DPI $(CONFIGS)')
-
 CXXFLAGS += -std=c++17 -Wall -Wextra -Wfatal-errors -Wno-array-bounds
 CXXFLAGS += -fPIC -Wno-maybe-uninitialized
 CXXFLAGS += -I$(SRC_DIR) -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR) -I$(DESTDIR)
@@ -38,6 +36,10 @@ DBG_SCOPE_FLAGS += -DDBG_SCOPE_LSU
 
 DBG_FLAGS += -DDEBUG_LEVEL=$(DEBUG) -DVCD_OUTPUT $(DBG_TRACE_FLAGS)
 
+CONFIGS += -DSIMULATION -DSV_DPI
+
+XCONFIGS := $(shell python3 $(ROOT_DIR)/ci/gen_config.py --config=$(VORTEX_HOME)/hw/VX_config.toml --cflags='$(CONFIGS)')
+
 SRCS = $(SW_COMMON_DIR)/util.cpp $(SW_COMMON_DIR)/mem.cpp $(SW_COMMON_DIR)/softfloat_ext.cpp $(SW_COMMON_DIR)/rvfloats.cpp $(SW_COMMON_DIR)/dram_sim.cpp
 SRCS += $(DPI_DIR)/dpi_util.cpp $(DPI_DIR)/dpi_float.cpp
 SRCS += $(SRC_DIR)/fpga.cpp $(SRC_DIR)/opae_sim.cpp
@@ -49,31 +51,24 @@ FPU_INCLUDE = -I$(RTL_DIR)/fpu
 ifneq (,$(filter -DFPU_TYPE_FPNEW, $(XCONFIGS)))
 	RTL_PKGS += $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_pkg.sv $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/cf_math_pkg.sv $(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl/defs_div_sqrt_mvp.sv
 	FPU_INCLUDE += -I$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/include -I$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src -I$(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl -I$(THIRD_PARTY_DIR)/cvfpu/src
-	FPU_INCLUDE += -I$(THIRD_PARTY_DIR)/cvfpu/vendor/openc910/C910_RTL_FACTORY/gen_rtl/vfdsu/rtl -I$(THIRD_PARTY_DIR)/cvfpu/vendor/openc910/C910_RTL_FACTORY/gen_rtl/clk/rtl
-	FPU_INCLUDE += -I$(THIRD_PARTY_DIR)/cvfpu/vendor/opene906/E906_RTL_FACTORY/gen_rtl/fdsu/rtl -I$(THIRD_PARTY_DIR)/cvfpu/vendor/opene906/E906_RTL_FACTORY/gen_rtl/fpu/rtl -I$(THIRD_PARTY_DIR)/cvfpu/vendor/opene906/E906_RTL_FACTORY/gen_rtl/clk/rtl
+	FPU_INCLUDE += -y $(THIRD_PARTY_DIR)/cvfpu/src/stubs
 endif
 RTL_INCLUDE = -I$(ROOT_DIR)/hw -I$(SRC_DIR) -I$(RTL_DIR) -I$(DPI_DIR) -I$(RTL_DIR)/libs -I$(RTL_DIR)/interfaces -I$(RTL_DIR)/core -I$(RTL_DIR)/mem -I$(RTL_DIR)/cache $(FPU_INCLUDE)
 RTL_INCLUDE += -I$(AFU_DIR) -I$(AFU_DIR)/ccip
 
-# Add DXA extension sources
-ifneq (,$(filter -DEXT_DXA_ENABLE, $(CONFIGS)))
-	RTL_PKGS += $(RTL_DIR)/dxa/VX_dxa_pkg.sv
-	RTL_INCLUDE += -I$(RTL_DIR)/dxa
-endif
-
 # Add TCU extension sources
-ifneq (,$(filter -DEXT_TCU_ENABLE, $(CONFIGS)))
+ifneq (,$(filter -DEXT_TCU_ENABLE, $(XCONFIGS)))
 	RTL_PKGS += $(RTL_DIR)/tcu/VX_tcu_pkg.sv
 	RTL_INCLUDE += -I$(RTL_DIR)/tcu
-	ifneq (,$(filter -DTCU_TYPE_DPI, $(CONFIGS)))
+	ifneq (,$(filter -DTCU_TYPE_DPI, $(XCONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dpi
-	else ifneq (,$(filter -DTCU_TYPE_DSP, $(CONFIGS)))
+	else ifneq (,$(filter -DTCU_TYPE_DSP, $(XCONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dsp
-	else ifneq (,$(filter -DTCU_TYPE_BHF, $(CONFIGS)))
+	else ifneq (,$(filter -DTCU_TYPE_BHF, $(XCONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/bhf
 		RTL_INCLUDE += -J$(THIRD_PARTY_DIR)/hardfloat/source/RISCV
 		RTL_INCLUDE += -I$(THIRD_PARTY_DIR)/hardfloat/source
-	else ifneq (,$(filter -DTCU_TYPE_TFR, $(CONFIGS)))
+	else ifneq (,$(filter -DTCU_TYPE_TFR, $(XCONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/tfr
 	else
 		# No explicit TCU type — VX_config.vh defaults to DPI for simulation
@@ -81,8 +76,14 @@ ifneq (,$(filter -DEXT_TCU_ENABLE, $(CONFIGS)))
 	endif
 endif
 
+# Add DXA extension sources
+ifneq (,$(filter -DEXT_DXA_ENABLE, $(XCONFIGS)))
+	RTL_PKGS += $(RTL_DIR)/dxa/VX_dxa_pkg.sv
+	RTL_INCLUDE += -I$(RTL_DIR)/dxa
+endif
+
 # Add V extension sources
-ifneq (,$(filter -DEXT_V_ENABLE, $(CONFIGS)))
+ifneq (,$(filter -DEXT_V_ENABLE, $(XCONFIGS)))
 	RTL_PKGS += $(RTL_DIR)/vpu/VX_vpu_pkg.sv
 	RTL_INCLUDE += -I$(RTL_DIR)/vpu
 endif
@@ -91,11 +92,10 @@ RTL_PKGS += $(RTL_DIR)/VX_trace_pkg.sv
 
 TOP = vortex_afu_shim
 
-VL_FLAGS += --language 1800-2009 --assert -Wall -Wpedantic
+VL_FLAGS += --language 1800-2012 --assert -Wall -Wpedantic
 VL_FLAGS += -Wno-DECLFILENAME -Wno-REDEFMACRO
 VL_FLAGS += --x-initial unique --x-assign unique
 VL_FLAGS += verilator.vlt
-VL_FLAGS += -DSIMULATION -DSV_DPI
 VL_FLAGS += -DXLEN_$(XLEN)
 VL_FLAGS += $(CONFIGS)
 VL_FLAGS += $(RTL_INCLUDE)
@@ -134,6 +134,12 @@ ifdef PERF
 	CXXFLAGS += -DPERF_ENABLE
 endif
 
+# Enable SAIF tracing
+ifdef SAIF
+	VL_FLAGS += --trace-saif
+	CXXFLAGS += -DSAIF_OUTPUT
+endif
+
 # use our OPAE shim
 VL_FLAGS += -DNOPAE
 CXXFLAGS += -DNOPAE
@@ -144,10 +150,10 @@ PROJECT := libopae-c-sim.so
 
 all: $(DESTDIR)/$(PROJECT)
 
-$(DESTDIR)/vortex.xml: $(CONFIG_FILE)
-	verilator --xml-only -O0 $(VL_FLAGS) $(TOP) --xml-output $@
+$(DESTDIR)/vortex.json: $(CONFIG_FILE)
+	verilator --json-only -O0 $(VL_FLAGS) $(TOP) --json-only-output $@
 
-$(DESTDIR)/scope.json: $(DESTDIR)/vortex.xml
+$(DESTDIR)/scope.json: $(DESTDIR)/vortex.json
 	$(SCRIPT_DIR)/scope.py $^ -o $@
 
 $(DESTDIR)/$(PROJECT): $(SRCS) $(SCOPE_JSON) $(CONFIG_FILE) $(RTL_SRCS)
@@ -156,13 +162,14 @@ $(DESTDIR)/$(PROJECT): $(SRCS) $(SCOPE_JSON) $(CONFIG_FILE) $(RTL_SRCS)
 # updates the timestamp when flags changed.
 $(CONFIG_FILE): force
 	@mkdir -p $(@D)
-	@printf '%s\n' "$(VL_FLAGS)" > $@.tmp
+	@printf '%s\n' "$(VL_FLAGS)" "$(CXXFLAGS)" > $@.tmp
 	@if ! cmp -s $@.tmp $@; then \
 	  mv $@.tmp $@; \
+	  rm -rf $(DESTDIR)/$(PROJECT).obj_dir; \
 	else \
 	  rm $@.tmp; \
 	fi
 
 clean:
 	rm -rf $(DESTDIR)/$(PROJECT).obj_dir
-	rm -f $(DESTDIR)/vortex.xml $(DESTDIR)/scope.json $(DESTDIR)/$(PROJECT)
+	rm -f $(DESTDIR)/vortex.json $(DESTDIR)/scope.json $(DESTDIR)/$(PROJECT)

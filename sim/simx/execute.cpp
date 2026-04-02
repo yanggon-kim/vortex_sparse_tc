@@ -1462,7 +1462,7 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
         trace->data = std::make_shared<SfuTraceData>(next_tmask.to_ulong(), 0);
       } break;
       case WctlType::WSPAWN: {
-        trace->fetch_stall = true;
+        trace->fetch_stall = true; // should wait for current warp's states to be copied to other warps
         trace->data = std::make_shared<SfuTraceData>(rs1_data.at(thread_last).u, rs2_data.at(thread_last).u);
       } break;
       case WctlType::SPLIT: {
@@ -1566,22 +1566,24 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
 #ifdef EXT_DXA_ENABLE
     ,[&](DxaType /*dxa_type*/) {
       // Wgather-based DXA: all args packed into 4 lanes of a single instruction.
-      // Lane 0: rs1=smem_addr, rs2=coord2
+      // Lane 0: rs1=lmem_addr, rs2=coord2
       // Lane 1: rs1=meta,      rs2=coord3
       // Lane 2: rs1=coord0,    rs2=coord4
-      // Lane 3: rs1=coord1,    rs2=0
+      // Lane 3: rs1=coord1,    rs2=cta_mask (2D multicast) or 0
       trace->fetch_stall = false;
-      uint64_t smem_addr  = static_cast<uint64_t>(rs1_data.at(0).u);
+      uint64_t lmem_addr  = static_cast<uint64_t>(rs1_data.at(0).u);
       uint32_t meta       = rs1_data.at(1).u;
       uint32_t coords[5]  = { rs1_data.at(2).u, rs1_data.at(3).u,
                                rs2_data.at(0).u, rs2_data.at(1).u,
                                rs2_data.at(2).u };
+      uint32_t cta_mask   = rs2_data.at(3).u;  // lane 3 rs2 = cta_mask (multicast)
       uint32_t desc_slot  = meta & 0x0fu;
       uint32_t raw_bar    = (meta >> 4) & 0x07ffffffu;
       uint32_t bar_id     = bar_decode_id(raw_bar, core_->arch().num_barriers());
       auto dxa_core = core_->socket()->cluster()->dxa_core();
-      auto td = dxa_core->execute_copy(core_, desc_slot, smem_addr, coords);
-      td->bar_id  = bar_id;
+      auto td = dxa_core->execute_copy(core_, desc_slot, lmem_addr, coords);
+      td->bar_id      = bar_id;
+      td->cta_mask    = cta_mask;
       trace->data = td;
     }
 #endif
@@ -1640,29 +1642,67 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
     ,[&](TcuType tcu_type) {
       auto tpuArgs = std::get<IntrTcuArgs>(instrArgs);
       switch (tcu_type) {
-      case TcuType::WMMA:
-      case TcuType::WMMA_SP: {
+      case TcuType::WMMA: {
         auto trace_data = std::make_shared<TensorUnit::ExeTraceData>();
         trace->data = trace_data;
         assert(operand_tmask.count() == num_threads);
-        bool is_sparse = (tcu_type == TcuType::WMMA_SP);
-        if (is_sparse) assert(exec_tmask.any());
+        assert(exec_tmask.count() == num_threads);
+        std::vector<reg_data_t> mx_a0_data(num_threads);
+        std::vector<reg_data_t> mx_a1_data(num_threads);
+        std::vector<reg_data_t> mx_a2_data(num_threads);
+        std::vector<reg_data_t> mx_a3_data(num_threads);
+        std::vector<reg_data_t> mx_b0_data(num_threads);
+        std::vector<reg_data_t> mx_b1_data(num_threads);
+        std::vector<reg_data_t> mx_b2_data(num_threads);
+        std::vector<reg_data_t> mx_b3_data(num_threads);
+        auto& f8_data = warp.freg_file.at(8);
+        auto& f9_data = warp.freg_file.at(9);
+        auto& f20_data = warp.freg_file.at(20);
+        auto& f21_data = warp.freg_file.at(21);
+        auto& f18_data = warp.freg_file.at(18);
+        auto& f19_data = warp.freg_file.at(19);
+        auto& f22_data = warp.freg_file.at(22);
+        auto& f23_data = warp.freg_file.at(23);
+        for (uint32_t t = 0; t < num_threads; ++t) {
+          mx_a0_data[t].u64 = f8_data.at(t);
+          mx_a1_data[t].u64 = f9_data.at(t);
+          mx_a2_data[t].u64 = f20_data.at(t);
+          mx_a3_data[t].u64 = f21_data.at(t);
+          mx_b0_data[t].u64 = f18_data.at(t);
+          mx_b1_data[t].u64 = f19_data.at(t);
+          mx_b2_data[t].u64 = f22_data.at(t);
+          mx_b3_data[t].u64 = f23_data.at(t);
+        }
         core_->tensor_unit()->wmma(wid, tpuArgs.fmt_s, tpuArgs.fmt_d,
                                    tpuArgs.step_m, tpuArgs.step_n, tpuArgs.step_k,
-                                   rs1_data, rs2_data, rs3_data, rd_data, trace_data.get(), is_sparse);
+                                   rs1_data,
+                                   rs2_data,
+                                   rs3_data,
+                                   mx_a0_data,
+                                   mx_a1_data,
+                                   mx_a2_data,
+                                   mx_a3_data,
+                                   mx_b0_data,
+                                   mx_b1_data,
+                                   mx_b2_data,
+                                   mx_b3_data,
+                                   rd_data,
+                                   trace_data.get(),
+                                     tpuArgs.is_sparse);
         rd_write = true;
       } break;
   #ifdef TCU_WGMMA_ENABLE
-      case TcuType::WGMMA:
-      case TcuType::WGMMA_SP: {
+      case TcuType::WGMMA: {
         auto trace_data = std::make_shared<TensorUnit::ExeTraceData>();
         trace->data = trace_data;
         assert(operand_tmask.count() == num_threads);
-        bool is_sparse_wg = (tcu_type == TcuType::WGMMA_SP);
+        assert(exec_tmask.count() == num_threads);
+        uint32_t a_desc = rs1_data.empty() ? 0 : rs1_data.at(0).u32;
+        uint32_t b_desc = rs2_data.empty() ? 0 : rs2_data.at(0).u32;
         core_->tensor_unit()->wgmma(wid, tpuArgs.fmt_s, tpuArgs.fmt_d,
                                     tpuArgs.step_m, tpuArgs.step_n, tpuArgs.step_k,
-                                    rs2_data.at(0).u32, rs3_data.at(0).u32,
-                                    rs1_data, rd_data, trace_data.get(), is_sparse_wg);
+                                    a_desc, b_desc, rs3_data, rd_data,
+                                    trace_data.get(), tpuArgs.is_sparse);
         rd_write = true;
       } break;
   #endif // TCU_WGMMA_ENABLE
@@ -1670,6 +1710,7 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
         auto trace_data = std::make_shared<TensorUnit::ExeTraceData>();
         trace->data = trace_data;
         assert(operand_tmask.count() == num_threads);
+        assert(exec_tmask.count() == num_threads);
         core_->tensor_unit()->meta_store(wid, tpuArgs.fmt_s, tpuArgs.fmt_d, rs1_data, trace_data.get());
       } break;
       default:

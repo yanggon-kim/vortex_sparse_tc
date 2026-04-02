@@ -16,7 +16,9 @@
 // reset all GPRs in debug mode
 `ifdef SIMULATION
 `ifndef NDEBUG
+`ifndef GPR_RESET
 `define GPR_RESET
+`endif
 `endif
 `endif
 
@@ -288,7 +290,7 @@ module VX_opc_unit import VX_gpu_pkg::*; #(
         ) gpr_ram (
             .clk   (clk),
             .reset (reset),
-            .read  (pipe_fire_st1),
+            .read  (pipe_fire_st1 && gpr_rd_valid_st1[b]),
             .wren  (gpr_wr_byteen),
             .write (gpr_wr_enabled),
             .waddr (gpr_wr_addr),

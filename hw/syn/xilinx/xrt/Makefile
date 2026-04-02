@@ -16,6 +16,9 @@ TARGET ?= hw
 PLATFORM ?=
 
 PREFIX ?= build$(XLEN)
+
+SAIF_FILE ?=
+SAIF_INST ?=
 MAX_JOBS ?= 8
 
 SRC_DIR := $(VORTEX_HOME)/hw/syn/xilinx/xrt
@@ -76,10 +79,18 @@ CONFIGS_64c := -DNUM_CLUSTERS=4 -DNUM_CORES=16
 CONFIGS += $(CONFIGS_$(NUM_CORES)c)
 endif
 
+CONFIGS += -DSYNTHESIS -DVIVADO
+
+ifeq ($(TARGET), hw_emu)
+	CONFIGS += -DSIMULATION
+endif
+
+XCONFIGS := $(shell python3 $(ROOT_DIR)/ci/gen_config.py --config=$(VORTEX_HOME)/hw/VX_config.toml --cflags='$(CONFIGS)')
+
 # include sources
 RTL_PKGS = $(RTL_DIR)/VX_gpu_pkg.sv $(RTL_DIR)/fpu/VX_fpu_pkg.sv
 FPU_INCLUDE = -I$(RTL_DIR)/fpu
-ifneq (,$(filter -DFPU_TYPE_FPNEW, $(CONFIGS)))
+ifneq (,$(filter -DFPU_TYPE_FPNEW, $(XCONFIGS)))
 	RTL_PKGS += $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_pkg.sv $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/cf_math_pkg.sv $(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl/defs_div_sqrt_mvp.sv
 	FPU_INCLUDE += -J$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/include -J$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src -J$(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl -J$(THIRD_PARTY_DIR)/cvfpu/src
 endif
@@ -87,33 +98,33 @@ RTL_INCLUDE = -I$(ROOT_DIR)/hw -I$(RTL_DIR) -I$(RTL_DIR)/libs -I$(RTL_DIR)/inter
 RTL_INCLUDE += $(FPU_INCLUDE)
 
 # Add TCU extension sources
-ifneq (,$(filter -DEXT_TCU_ENABLE, $(CONFIGS)))
+ifneq (,$(filter -DEXT_TCU_ENABLE, $(XCONFIGS)))
 	RTL_PKGS += $(RTL_DIR)/tcu/VX_tcu_pkg.sv
 	RTL_INCLUDE += -I$(RTL_DIR)/tcu
-	ifneq (,$(filter -DTCU_TYPE_DPI, $(CONFIGS)))
+	ifneq (,$(filter -DTCU_TYPE_DPI, $(XCONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dpi
 	endif
-	ifneq (,$(filter -DTCU_TYPE_DSP, $(CONFIGS)))
+	ifneq (,$(filter -DTCU_TYPE_DSP, $(XCONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dsp
 	endif
-	ifneq (,$(filter -DTCU_TYPE_BHF, $(CONFIGS)))
+	ifneq (,$(filter -DTCU_TYPE_BHF, $(XCONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/bhf
 		RTL_INCLUDE += -J$(THIRD_PARTY_DIR)/hardfloat/source/RISCV
 		RTL_INCLUDE += -I$(THIRD_PARTY_DIR)/hardfloat/source
 	endif
-	ifneq (,$(filter -DTCU_TYPE_TFR, $(CONFIGS)))
+	ifneq (,$(filter -DTCU_TYPE_TFR, $(XCONFIGS)))
 		RTL_INCLUDE += -I$(RTL_DIR)/tcu/tfr
 	endif
 endif
 
 # Add DXA extension sources
-ifneq (,$(filter -DEXT_DXA_ENABLE, $(CONFIGS)))
+ifneq (,$(filter -DEXT_DXA_ENABLE, $(XCONFIGS)))
 	RTL_PKGS += $(RTL_DIR)/dxa/VX_dxa_pkg.sv
 	RTL_INCLUDE += -I$(RTL_DIR)/dxa
 endif
 
 # Add V extension sources
-ifneq (,$(filter -DEXT_V_ENABLE, $(CONFIGS)))
+ifneq (,$(filter -DEXT_V_ENABLE, $(XCONFIGS)))
 	RTL_PKGS += $(RTL_DIR)/vpu/VX_vpu_pkg.sv
 	RTL_INCLUDE += -I$(RTL_DIR)/vpu
 endif
@@ -142,10 +153,6 @@ ifdef PROFILE
 	VPP_FLAGS += --profile_kernel stall:all:all:all
 endif
 
-ifeq ($(TARGET), hw_emu)
-	CFLAGS += -DSIMULATION
-endif
-
 # Debugging
 ifdef DEBUG
 	VPP_FLAGS += -g --optimize 0 --debug.protocol all
@@ -168,7 +175,6 @@ ifdef SCOPE
 endif
 
 # compilation flags
-CFLAGS += -DSYNTHESIS -DVIVADO
 CFLAGS += -DXLEN_$(XLEN)
 CFLAGS += $(CONFIGS)
 CFLAGS += $(RTL_INCLUDE)
@@ -181,7 +187,7 @@ ifneq ($(TARGET),$(findstring $(TARGET), hw hw_emu))
 	$(warning WARNING:Application supports only hw hw_emu TARGET. Please use the target for running the application)
 endif
 
-.PHONY: all clean gen-sources gen-ast emconfig check-devices
+.PHONY: all clean gen-sources gen-ast emconfig check-devices power
 
 all: check-devices emconfig $(XCLBIN_CONTAINER) report
 
@@ -221,6 +227,16 @@ endif
 
 chipscope:
 	debug_hw --vivado --host localhost --ltx_file $(BUILD_DIR)/bin/vortex_afu.ltx &
+
+# Re-run power analysis on an existing build without rebuilding the design.
+# The Vitis flow writes the routed checkpoint under _x/link/vivado/vpl/prj/prj.runs/impl_1/.
+# Usage: make power SAIF_FILE=<saif-path> [SAIF_INST=<instance-path>] [BUILD_DIR=<path>]
+power:
+	@if [ -z "$(SAIF_FILE)" ]; then \
+	  echo "ERROR: SAIF_FILE not specified. Usage: make power SAIF_FILE=<path/to/trace.saif>"; exit 1; \
+	fi
+	TOOL_DIR=$(SCRIPT_DIR) SAIF_FILE=$(SAIF_FILE) SAIF_INST=$(SAIF_INST) \
+	  BUILD_DIR=$(BUILD_DIR) $(VIVADO) -mode batch -source $(SCRIPT_DIR)/xilinx_power_analysis.tcl
 
 clean:
 	$(RMDIR) $(BUILD_DIR)

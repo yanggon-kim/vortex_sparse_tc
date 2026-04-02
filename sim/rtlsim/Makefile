@@ -5,8 +5,6 @@ DESTDIR ?= $(CURDIR)
 CONFIG_FILE = $(DESTDIR)/rtlsim_config.stamp
 SRC_DIR = $(VORTEX_HOME)/sim/rtlsim
 
-XCONFIGS := $(shell python3 $(ROOT_DIR)/ci/gen_config.py --config $(VORTEX_HOME)/hw/VX_config.toml --cflags '-DSV_DPI $(CONFIGS)')
-
 CXXFLAGS += -std=c++17 -Wall -Wextra -Wfatal-errors -Wno-array-bounds
 CXXFLAGS += -fPIC -Wno-maybe-uninitialized
 CXXFLAGS += -I$(ROOT_DIR)/hw -I$(SW_COMMON_DIR)
@@ -29,45 +27,46 @@ DBG_TRACE_FLAGS += -DDBG_TRACE_SCOPE
 DBG_TRACE_FLAGS += -DDBG_TRACE_GBAR
 DBG_TRACE_FLAGS += -DDBG_TRACE_TCU
 
-DBG_FLAGS += -DDEBUG_LEVEL=$(DEBUG) -DVCD_OUTPUT $(DBG_TRACE_FLAGS)
+CONFIGS += -DSIMULATION -DSV_DPI
 
+XCONFIGS := $(shell python3 $(ROOT_DIR)/ci/gen_config.py --config=$(VORTEX_HOME)/hw/VX_config.toml --cflags='$(CONFIGS)')
+
+DBG_FLAGS += -DDEBUG_LEVEL=$(DEBUG) -DVCD_OUTPUT $(DBG_TRACE_FLAGS)
 RTL_PKGS = $(RTL_DIR)/VX_gpu_pkg.sv $(RTL_DIR)/fpu/VX_fpu_pkg.sv
 
 FPU_INCLUDE = -I$(RTL_DIR)/fpu
 ifneq (,$(filter -DFPU_TYPE_FPNEW, $(XCONFIGS)))
 	RTL_PKGS += $(THIRD_PARTY_DIR)/cvfpu/src/fpnew_pkg.sv $(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src/cf_math_pkg.sv $(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl/defs_div_sqrt_mvp.sv
 	FPU_INCLUDE += -I$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/include -I$(THIRD_PARTY_DIR)/cvfpu/src/common_cells/src -I$(THIRD_PARTY_DIR)/cvfpu/src/fpu_div_sqrt_mvp/hdl -I$(THIRD_PARTY_DIR)/cvfpu/src
+	FPU_INCLUDE += -y $(THIRD_PARTY_DIR)/cvfpu/src/stubs
 endif
 RTL_INCLUDE = -I$(ROOT_DIR)/hw -I$(SRC_DIR) -I$(RTL_DIR) -I$(DPI_DIR) -I$(RTL_DIR)/libs -I$(RTL_DIR)/interfaces -I$(RTL_DIR)/core -I$(RTL_DIR)/mem -I$(RTL_DIR)/cache $(FPU_INCLUDE)
 
+# Add TCU extension sources
+ifneq (,$(filter -DEXT_TCU_ENABLE, $(XCONFIGS)))
+	RTL_PKGS += $(RTL_DIR)/tcu/VX_tcu_pkg.sv
+	RTL_INCLUDE += -I$(RTL_DIR)/tcu
+	ifneq (,$(filter -DTCU_TYPE_DPI, $(XCONFIGS)))
+		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dpi
+	else ifneq (,$(filter -DTCU_TYPE_DSP, $(XCONFIGS)))
+		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dsp
+	else ifneq (,$(filter -DTCU_TYPE_BHF, $(XCONFIGS)))
+		RTL_INCLUDE += -I$(RTL_DIR)/tcu/bhf
+		RTL_INCLUDE += -J$(THIRD_PARTY_DIR)/hardfloat/source/RISCV
+		RTL_INCLUDE += -I$(THIRD_PARTY_DIR)/hardfloat/source
+	else ifneq (,$(filter -DTCU_TYPE_TFR, $(XCONFIGS)))
+		RTL_INCLUDE += -I$(RTL_DIR)/tcu/tfr
+	endif
+endif
+
 # Add DXA extension sources
-ifneq (,$(filter -DEXT_DXA_ENABLE, $(CONFIGS)))
+ifneq (,$(filter -DEXT_DXA_ENABLE, $(XCONFIGS)))
 	RTL_PKGS += $(RTL_DIR)/dxa/VX_dxa_pkg.sv
 	RTL_INCLUDE += -I$(RTL_DIR)/dxa
 endif
 
-# Add TCU extension sources
-ifneq (,$(filter -DEXT_TCU_ENABLE, $(CONFIGS)))
-	RTL_PKGS += $(RTL_DIR)/tcu/VX_tcu_pkg.sv
-	RTL_INCLUDE += -I$(RTL_DIR)/tcu
-	ifneq (,$(filter -DTCU_TYPE_DPI, $(CONFIGS)))
-		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dpi
-	else ifneq (,$(filter -DTCU_TYPE_DSP, $(CONFIGS)))
-		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dsp
-	else ifneq (,$(filter -DTCU_TYPE_BHF, $(CONFIGS)))
-		RTL_INCLUDE += -I$(RTL_DIR)/tcu/bhf
-		RTL_INCLUDE += -J$(THIRD_PARTY_DIR)/hardfloat/source/RISCV
-		RTL_INCLUDE += -I$(THIRD_PARTY_DIR)/hardfloat/source
-	else ifneq (,$(filter -DTCU_TYPE_TFR, $(CONFIGS)))
-		RTL_INCLUDE += -I$(RTL_DIR)/tcu/tfr
-	else
-		# No explicit TCU type — VX_config.vh defaults to DPI for simulation
-		RTL_INCLUDE += -I$(RTL_DIR)/tcu/dpi
-	endif
-endif
-
 # Add V extension sources
-ifneq (,$(filter -DEXT_V_ENABLE, $(CONFIGS)))
+ifneq (,$(filter -DEXT_V_ENABLE, $(XCONFIGS)))
 	RTL_PKGS += $(RTL_DIR)/vpu/VX_vpu_pkg.sv
 	RTL_INCLUDE += -I$(RTL_DIR)/vpu
 endif
@@ -81,11 +80,10 @@ SRCS += $(SRC_DIR)/processor.cpp
 TOP = rtlsim_shim
 
 VL_FLAGS = --exe
-VL_FLAGS += --language 1800-2009 --assert -Wall -Wpedantic
+VL_FLAGS += --language 1800-2012 --assert -Wall -Wpedantic
 VL_FLAGS += -Wno-DECLFILENAME -Wno-REDEFMACRO
 VL_FLAGS += --x-initial unique --x-assign unique
 VL_FLAGS += verilator.vlt
-VL_FLAGS += -DSIMULATION -DSV_DPI
 VL_FLAGS += -DXLEN_$(XLEN)
 VL_FLAGS += $(CONFIGS)
 VL_FLAGS += $(RTL_INCLUDE)
@@ -118,6 +116,12 @@ ifdef PERF
 	CXXFLAGS += -DPERF_ENABLE
 endif
 
+# Enable SAIF tracing
+ifdef SAIF
+	VL_FLAGS += --trace-saif
+	CXXFLAGS += -DSAIF_OUTPUT
+endif
+
 PROJECT := rtlsim
 
 .PHONY: all force clean clean-lib clean-exe
@@ -133,9 +137,10 @@ $(DESTDIR)/lib$(PROJECT).so: $(SRCS) $(CONFIG_FILE) $(RTL_SRCS)
 # updates the timestamp when flags changed.
 $(CONFIG_FILE): force
 	@mkdir -p $(@D)
-	@printf '%s\n' "$(VL_FLAGS)" > $@.tmp
+	@printf '%s\n' "$(VL_FLAGS)" "$(CXXFLAGS)" > $@.tmp
 	@if ! cmp -s $@.tmp $@; then \
 	  mv $@.tmp $@; \
+	  rm -rf $(DESTDIR)/$(PROJECT).obj_dir; \
 	else \
 	  rm $@.tmp; \
 	fi
