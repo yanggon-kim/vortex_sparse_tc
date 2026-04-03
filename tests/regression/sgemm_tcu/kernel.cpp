@@ -28,18 +28,25 @@ extern "C" void kernel_main(kernel_arg_t* __UNIFORM__ arg) {
 
   uint32_t start_cycles = csr_read(VX_CSR_MCYCLE);
 
-  for (int i = 0; i < K; i += ctx::tileK) {
-    auto pTileA = pA + tile_row * K + i;
-
-    // Load A tile
-    ctx::load_matrix_sync(fragA, pTileA, K);
-
-    // Load B tile (col-major for all types)
-    auto pTileB = pB + tile_col * K + i;
-    ctx::load_matrix_sync<vt::col_major>(fragB, pTileB, K);
-
-    // Matrix multiply-accumulate: c += a * b
-    ctx::mma_sync(fragC, fragA, fragB, fragC);
+  if constexpr (vt::ITYPE::bits >= 8) {
+    // Tiled col-major B: tiles of tileN×tileK, ldm=tileK
+    auto pTileB = pB + blockIdx.x * K * ctx::tileN;
+    for (int i = 0; i < K; i += ctx::tileK) {
+      auto pTileA = pA + tile_row * K + i;
+      ctx::load_matrix_sync(fragA, pTileA, K);
+      ctx::load_matrix_sync<vt::col_major>(fragB, pTileB, ctx::tileK);
+      ctx::mma_sync(fragC, fragA, fragB, fragC);
+      pTileB += ctx::tileN * ctx::tileK;
+    }
+  } else {
+    // Sub-byte: regular col-major B with ldm=K
+    for (int i = 0; i < K; i += ctx::tileK) {
+      auto pTileA = pA + tile_row * K + i;
+      ctx::load_matrix_sync(fragA, pTileA, K);
+      auto pTileB = pB + tile_col * K + i;
+      ctx::load_matrix_sync<vt::col_major>(fragB, pTileB, K);
+      ctx::mma_sync(fragC, fragA, fragB, fragC);
+    }
   }
 
   // Store the computed C tile

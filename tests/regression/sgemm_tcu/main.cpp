@@ -37,6 +37,21 @@ static void convert_row_to_col_major(T *dst, const T *src, uint32_t rows, uint32
   }
 }
 
+template <typename T>
+static void convert_row_to_tiled_col_major(T *dst, const T *src,
+                                            uint32_t K, uint32_t N,
+                                            uint32_t tileK, uint32_t tileN) {
+  for (uint32_t tn = 0; tn < N; tn += tileN) {
+    for (uint32_t tk = 0; tk < K; tk += tileK) {
+      for (uint32_t c = 0; c < tileN; ++c) {
+        for (uint32_t r = 0; r < tileK; ++r) {
+          *dst++ = src[(tk + r) * N + (tn + c)];
+        }
+      }
+    }
+  }
+}
+
 static void convert_row_to_col_major_4bit(uint8_t *dst, uint32_t width, uint32_t height, const uint8_t *src) {
   // Calculate output size and stride
   uint32_t out_bytes = (width * height + 1) / 2;
@@ -676,7 +691,7 @@ int main(int argc, char *argv[]) {
       RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB));
     } else {
       std::vector<itype_t> h_B_col(sizeB);
-      convert_row_to_col_major(h_B_col.data(), h_B.data(), K, N);
+      convert_row_to_tiled_col_major(h_B_col.data(), h_B.data(), K, N, cfg::tileK, cfg::tileN);
       RT_CHECK(vx_copy_to_dev(B_buffer, h_B_col.data(), 0, sizeB * sizeof(itype_t)));
     }
   }
