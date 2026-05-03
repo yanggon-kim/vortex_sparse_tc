@@ -291,24 +291,11 @@ public:
     static_assert(Frag::Use == matrix_a, "sparse metadata load is only valid for matrix_a fragment");
 
     auto meta_base = reinterpret_cast<const float*>(meta_sp_ptr);
-#ifdef TCU_LDMETA_ENABLE
-    // LDMETA path: hardware adds (lane_id * 4) to (rs1 + sext(imm12)) per
-    // lane, so the kernel passes the warp-uniform meta_base directly. The
-    // K-loop emits NO `csrr tid / slli / add` for metadata addressing
-    // (saving 3 arith vs the FLW path). col_idx is encoded in funct3 so
-    // both loads share the same base register with compile-time imm12
-    // offsets — no `addi` between them either.
-    frag.data[sparse_regs] = vx_ldmeta_c0(meta_base, 0);
-    if constexpr (sp_num_meta_loads == 2) {
-      frag.data[sparse_regs + 1] = vx_ldmeta_c1(meta_base, NT * (int)sizeof(float));
-    }
-#else
     uint32_t lane_id = vx_thread_id();
     frag.data[sparse_regs] = meta_base[lane_id];
     if constexpr (sp_num_meta_loads == 2) {
       frag.data[sparse_regs + 1] = meta_base[NT + lane_id];
     }
-#endif
   }
 
   template <typename Frag, typename T>

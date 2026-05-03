@@ -859,46 +859,6 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
       case LsuType::FENCE: {
         // no compute
       } break;
-      case LsuType::META_LOAD: {
-        // LDMETA: per-lane load whose response writes both the FP regfile
-        // (for scoreboard ordering vs subsequent WMMA_SP) and the TCU
-        // per-warp metadata SRAM directly. col_idx is encoded in funct3
-        // (width=6→col=0, width=7→col=1); offset is a real signed imm12
-        // address offset so the compiler can keep a single base register
-        // across multiple LDMETAs (no per-load addi).
-        //
-        // Per-lane address = rs1 + sext(imm12) + (lane_id * 4). Hardware
-        // adds the lane offset internally so the kernel passes a warp-
-        // uniform base pointer (pMetaSp) directly — eliminating the
-        // 3-instr `csrr tid; slli; add` sequence the FLW path requires
-        // for per-lane addressing.
-        auto trace_data = std::make_shared<LsuTraceData>(num_threads);
-        trace->data = trace_data;
-        uint32_t col_idx = (lsuArgs.width == 7) ? 1 : 0;
-        Word offset = sext<Word>(lsuArgs.offset, 32);
-        std::vector<reg_data_t> lane_data(num_threads);
-        for (uint32_t t = thread_start; t < num_threads; ++t) {
-          if (!warp.tmask.test(t))
-            continue;
-          uint64_t mem_addr = rs1_data[t].i + offset + (uint64_t)(t * 4);
-          uint64_t read_data = 0;
-          this->mem_read(&read_data, mem_addr, 4);
-          trace_data->mem_addrs.at(t) = {mem_addr, 4};
-          uint32_t word = (uint32_t)read_data;
-          // Regfile writeback: nan-box for FP destination so scoreboard
-          // tracks the dependency exactly as today's FLW path.
-          rd_data[t].u64 = nan_box(word);
-          lane_data[t].u32 = word;
-        }
-        // Side effect: stage meta SRAM for col_idx. WMMA_SP that follows
-        // skips its META_STORE prologue and reads this directly.
-      #ifdef EXT_TCU_ENABLE
-        core_->tensor_unit()->ldmeta_writeback(wid, col_idx, lane_data);
-      #else
-        (void)col_idx;
-      #endif
-        rd_write = true;
-      } break;
       default:
         std::abort();
       }

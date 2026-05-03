@@ -707,43 +707,6 @@ public:
     }
   }
 
-  // LDMETA writeback: data for col_idx arrives directly from the LSU response
-  // (one word per lane). Mirrors the default sparse path of meta_store() —
-  // the (col, bank) mapping must match exactly so WMMA_SP reads the same
-  // SRAM contents it would have after a META_STORE uop.
-  void ldmeta_writeback(uint32_t wid,
-                        uint32_t col_idx,
-                        const std::vector<reg_data_t>& lane_data) {
-    if constexpr (cfg::stores_per_col > 1) {
-      // NT < per_warp_depth: col_idx enumerates (col, store_in_col) pairs.
-      uint32_t col = col_idx / cfg::stores_per_col;
-      uint32_t store_in_col = col_idx % cfg::stores_per_col;
-      uint32_t bank_base = store_in_col * cfg::banks_per_store;
-      for (uint32_t t = 0; t < cfg::banks_per_store; ++t) {
-        uint32_t bank = bank_base + t;
-        if (bank >= kMetaBanks) break;
-        sparse_meta_.at(wid).at(bank * kMaxMetaCols + col) = lane_data.at(t).u32;
-      }
-      return;
-    }
-    // NT >= per_warp_depth: col_idx is a column group; group covers
-    // meta_cols_per_load columns across all banks.
-    uint32_t group = col_idx;
-    uint32_t col_begin = group * cfg::meta_cols_per_load;
-    // Without fmt_s we cannot bound num_cols precisely, but the kernel
-    // emits exactly the right number of LDMETAs, so trust col_idx.
-    uint32_t col_end = col_begin + cfg::meta_cols_per_load;
-    for (uint32_t col = col_begin; col < col_end; ++col) {
-      uint32_t col_in_group = col - col_begin;
-      uint32_t thread_offset = col_in_group * kMetaBanks;
-      for (uint32_t bank = 0; bank < kMetaBanks; ++bank) {
-        uint32_t src_idx = thread_offset + bank;
-        if (src_idx >= lane_data.size()) break;
-        sparse_meta_.at(wid).at(bank * kMaxMetaCols + col) = lane_data.at(src_idx).u32;
-      }
-    }
-  }
-
   void wmma(uint32_t wid,
             uint32_t fmt_s,
             uint32_t fmt_d,
@@ -1192,11 +1155,9 @@ uint32_t TcuUopGen::uop_count(const Instr& instr) {
     bool is_sparse = args.is_sparse;
     bool is_mx = vt::mx_scale_format(args.fmt_s);
     uint32_t sparse_meta_stores = 0;
-#if !defined(TCU_LDMETA_ENABLE) && !defined(SUPPRESS_SPARSE_META_STORE)
     if (is_sparse) {
       sparse_meta_stores = vt::sparse_meta_total_store_uops(args.fmt_s, wmma::stores_per_col, NUM_THREADS, wmma::meta_cols_per_load);
     }
-#endif
     uint32_t mx_meta_stores = is_mx ? mx_meta_words(args.fmt_s) : 0;
     uint32_t k_count = is_sparse ? (wmma::k_steps / 2) : wmma::k_steps;
     uint32_t mma_steps = (wmma::sym_sparse && is_sparse)
@@ -1252,11 +1213,9 @@ Instr::Ptr TcuUopGen::get(const Instr& macro_instr, uint32_t uop_index) {
 
     bool is_mx = vt::mx_scale_format(fmt_s);
     uint32_t sparse_meta_stores = 0;
-#if !defined(TCU_LDMETA_ENABLE) && !defined(SUPPRESS_SPARSE_META_STORE)
     if (is_sparse) {
       sparse_meta_stores = vt::sparse_meta_total_store_uops(fmt_s, wmma::stores_per_col, NUM_THREADS, wmma::meta_cols_per_load);
     }
-#endif
     uint32_t mx_meta_stores = is_mx ? mx_meta_words(fmt_s) : 0;
     uint32_t total_meta_stores = sparse_meta_stores + mx_meta_stores;
 
@@ -1513,10 +1472,4 @@ void TensorUnit::meta_store(uint32_t wid,
                             const std::vector<reg_data_t>& rs1_data,
                             ExeTraceData* trace_data) {
   impl_->meta_store(wid, fmt_s, col_idx, meta_kind, rs1_data, trace_data);
-}
-
-void TensorUnit::ldmeta_writeback(uint32_t wid,
-                                  uint32_t col_idx,
-                                  const std::vector<reg_data_t>& lane_data) {
-  impl_->ldmeta_writeback(wid, col_idx, lane_data);
 }
