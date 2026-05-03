@@ -355,7 +355,9 @@ inline std::ostream &operator<<(std::ostream &os, const MdvType& type) {
 enum class LsuType {
   LOAD,
   STORE,
-  FENCE
+  FENCE,
+  META_LOAD  // sparse 2:4 metadata: addr from rs1+imm, response writes
+             // directly into TCU per-warp meta SRAM (no regfile writeback).
 };
 
 struct IntrLsuArgs {
@@ -367,9 +369,10 @@ struct IntrLsuArgs {
 
 inline std::ostream &operator<<(std::ostream &os, const LsuType& type) {
   switch (type) {
-  case LsuType::LOAD:   os << "LOAD"; break;
-  case LsuType::STORE:  os << "STORE"; break;
-  case LsuType::FENCE:  os << "FENCE"; break;
+  case LsuType::LOAD:      os << "LOAD"; break;
+  case LsuType::STORE:     os << "STORE"; break;
+  case LsuType::FENCE:     os << "FENCE"; break;
+  case LsuType::META_LOAD: os << "META_LOAD"; break;
   default:
     assert(false);
   }

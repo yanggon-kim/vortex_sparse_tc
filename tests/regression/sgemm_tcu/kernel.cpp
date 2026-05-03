@@ -26,34 +26,30 @@ __kernel void kernel_main(kernel_arg_t* __UNIFORM__ arg) {
   // Initialize accumulator tile to zero
   ctx::fill_fragment(fragC, 0);
 
-#ifdef PROFILE_ENABLE
-  uint32_t cycles = 0;
-#endif
+  // Measure load + compute + store all together — same window as sparse.
+  __rdcycle_time t0 = vx_rdcycle_sync_begin();
 
-  for (int i = 0; i < K; i += ctx::tileK) {
+  for (int i = 0; i < (int)K; i += (int)ctx::tileK) {
     auto pTileA = pA + tile_row * K + i;
     auto pTileB = pB + tile_col * K + i;
-
-#ifdef PROFILE_ENABLE
-    __rdcycle_time t0 = vx_rdcycle_sync_begin();
-#endif
     ctx::load_matrix_sync(fragA, pTileA, K);
     ctx::load_matrix_sync<vt::col_major>(fragB, pTileB, K);
     ctx::mma_sync(fragC, fragA, fragB, fragC);
-#ifdef PROFILE_ENABLE
-    __rdcycle_time t1 = vx_rdcycle_sync_end();
-    cycles += vx_rdcycle_sync_diff(t0, t1);
-#endif
   }
 
   // Store the computed C tile
   auto pTileC = pC + tile_row * N + tile_col;
   ctx::store_matrix_sync(pTileC, fragC, N);
 
-#ifdef PROFILE_ENABLE
-  // Write per-block cycle count
-  auto pCycles = reinterpret_cast<uint32_t*>(arg->cycles_addr);
-  uint32_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
-  pCycles[block_id] = cycles;
-#endif
+  __rdcycle_time t1 = vx_rdcycle_sync_end();
+
+  // Write per-block (t0, t1) raw timestamps (hi, lo) x 2
+  if (threadIdx.x == 0) {
+    auto pCycles = reinterpret_cast<uint32_t*>(arg->cycles_addr);
+    uint32_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+    pCycles[block_id * 4 + 0] = t0.hi;
+    pCycles[block_id * 4 + 1] = t0.lo;
+    pCycles[block_id * 4 + 2] = t1.hi;
+    pCycles[block_id * 4 + 3] = t1.lo;
+  }
 }

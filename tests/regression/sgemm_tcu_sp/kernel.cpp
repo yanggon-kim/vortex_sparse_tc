@@ -24,9 +24,6 @@ __kernel void kernel_main(kernel_arg_t *__UNIFORM__ arg) {
   uint32_t tile_col = blockIdx.x * ctx::tileN;
 
   ctx::fill_fragment(fragC, 0);
-#ifdef PROFILE_ENABLE
-  uint32_t cycles = 0;
-#endif
 
   // Per-K-tile metadata reload
   constexpr uint32_t rtl_i_ratio = 32 / vt::ITYPE::bits;
@@ -41,35 +38,37 @@ __kernel void kernel_main(kernel_arg_t *__UNIFORM__ arg) {
 
   uint32_t stride_A = K / 2;
 
-  auto pMetaSp = pMetaSpBase + tile_row_idx * num_k_tiles * per_k_tile_words;
-  auto pTileA = pA + tile_row * stride_A;
-  constexpr uint32_t a_k_stride = ctx::tileK / 2;
+  auto pA_row    = pA + tile_row * stride_A;
+  auto pB_col    = pB + tile_col * K;
+  auto pMetaBase = pMetaSpBase + tile_row_idx * num_k_tiles * per_k_tile_words;
 
-  auto pTileB = pB + tile_col * K;
+  // Measure load + compute + store all together (bug_fixes-style instrumentation).
+  __rdcycle_time t0 = vx_rdcycle_sync_begin();
+
+  // Single-counter K-loop (dense-style): all addresses derived from `i` so
+  // the loop has just one increment (`addi t0, t0, tileK`). Trade-off vs
+  // pre-incremented base pointers depends on compiler strength-reduction.
   for (int i = 0; i < (int)K; i += (int)ctx::tileK) {
-#ifdef PROFILE_ENABLE
-    __rdcycle_time t0 = vx_rdcycle_sync_begin();
-#endif
-    ctx::load_matrix_sync<vt::row_major>(fragA, pTileA, stride_A);
-    ctx::load_sp_metadata(fragA, pMetaSp);
+    auto pTileA  = pA_row    + i / 2;
+    auto pTileB  = pB_col    + i;
+    auto pMetaSp = pMetaBase + (i / (int)ctx::tileK) * per_k_tile_words;
+    ctx::load_matrix_sync<vt::row_major>(fragA, pTileA, stride_A, pMetaSp);
     ctx::load_matrix_sync<vt::col_major>(fragB, pTileB, K);
     ctx::mma_sync(fragC, fragA, fragB, fragC);
-#ifdef PROFILE_ENABLE
-    __rdcycle_time t1 = vx_rdcycle_sync_end();
-    cycles += vx_rdcycle_sync_diff(t0, t1);
-#endif
-    pMetaSp += per_k_tile_words;
-    pTileA += a_k_stride;
-    pTileB += ctx::tileK;
   }
 
   auto pTileC = pC + tile_row * N + tile_col;
   ctx::store_matrix_sync(pTileC, fragC, N);
 
-#ifdef PROFILE_ENABLE
-  // Write per-block cycle count
-  auto pCycles = reinterpret_cast<uint32_t*>(arg->cycles_addr);
-  uint32_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
-  pCycles[block_id] = cycles;
-#endif
+  __rdcycle_time t1 = vx_rdcycle_sync_end();
+
+  // Write per-block (t0, t1) raw timestamps (hi, lo) x 2
+  if (threadIdx.x == 0) {
+    auto pCycles = reinterpret_cast<uint32_t*>(arg->cycles_addr);
+    uint32_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+    pCycles[block_id * 4 + 0] = t0.hi;
+    pCycles[block_id * 4 + 1] = t0.lo;
+    pCycles[block_id * 4 + 2] = t1.hi;
+    pCycles[block_id * 4 + 3] = t1.lo;
+  }
 }

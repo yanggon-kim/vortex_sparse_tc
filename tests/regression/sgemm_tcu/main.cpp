@@ -518,9 +518,7 @@ vx_device_h device = nullptr;
 vx_buffer_h A_buffer = nullptr;
 vx_buffer_h B_buffer = nullptr;
 vx_buffer_h C_buffer = nullptr;
-#ifdef PROFILE_ENABLE
 vx_buffer_h cycles_buffer = nullptr;
-#endif
 vx_buffer_h krnl_buffer = nullptr;
 vx_buffer_h args_buffer = nullptr;
 kernel_arg_t kernel_arg = {};
@@ -559,9 +557,7 @@ void cleanup() {
     vx_mem_free(A_buffer);
     vx_mem_free(B_buffer);
     vx_mem_free(C_buffer);
-#ifdef PROFILE_ENABLE
     vx_mem_free(cycles_buffer);
-#endif
     vx_mem_free(krnl_buffer);
     vx_mem_free(args_buffer);
     vx_dev_close(device);
@@ -641,11 +637,9 @@ int main(int argc, char *argv[]) {
   RT_CHECK(vx_mem_alloc(device, sizeC * sizeof(otype_t), VX_MEM_WRITE, &C_buffer));
   RT_CHECK(vx_mem_address(C_buffer, &kernel_arg.C_addr));
 
-#ifdef PROFILE_ENABLE
   uint32_t num_blocks = grid_dim[0] * grid_dim[1];
-  RT_CHECK(vx_mem_alloc(device, num_blocks * sizeof(uint32_t), VX_MEM_WRITE, &cycles_buffer));
+  RT_CHECK(vx_mem_alloc(device, num_blocks * 4 * sizeof(uint32_t), VX_MEM_WRITE, &cycles_buffer));
   RT_CHECK(vx_mem_address(cycles_buffer, &kernel_arg.cycles_addr));
-#endif
 
   std::cout << "A_addr=0x" << std::hex << kernel_arg.A_addr << std::endl;
   std::cout << "B_addr=0x" << std::hex << kernel_arg.B_addr << std::endl;
@@ -706,16 +700,31 @@ int main(int argc, char *argv[]) {
   double elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(time_end - time_start).count();
   printf("Elapsed time: %lg ms\n", elapsed);
 
-#ifdef PROFILE_ENABLE
-  // read back TCU cycle counts
+  // download per-block (t0, t1) timestamps and report KERNEL_LATENCY.
+  // Window covers load + compute + store, matching sgemm_tcu_sp's measurement
+  // for apples-to-apples sparse-vs-dense comparison.
+  // NOTE: kernel latency = max(t1) - min(t0) assumes NUM_CORES=1 (single mcycle CSR).
   {
-    std::vector<uint32_t> h_cycles(num_blocks);
-    RT_CHECK(vx_copy_from_dev(h_cycles.data(), cycles_buffer, 0, num_blocks * sizeof(uint32_t)));
-    uint32_t max_cycles = 0;
-    for (auto c : h_cycles) max_cycles = std::max(max_cycles, c);
-    printf("TCU_CYCLES: max=%u (across %u blocks)\n", max_cycles, num_blocks);
+    std::vector<uint32_t> h_cycles(num_blocks * 4);
+    RT_CHECK(vx_copy_from_dev(h_cycles.data(), cycles_buffer, 0, num_blocks * 4 * sizeof(uint32_t)));
+    uint64_t min_t0 = UINT64_MAX;
+    uint64_t max_t1 = 0;
+    uint64_t cycles_sum = 0;
+    uint32_t cycles_max = 0;
+    for (uint32_t i = 0; i < num_blocks; ++i) {
+      uint64_t t0 = ((uint64_t)h_cycles[i*4+0] << 32) | h_cycles[i*4+1];
+      uint64_t t1 = ((uint64_t)h_cycles[i*4+2] << 32) | h_cycles[i*4+3];
+      if (t0 < min_t0) min_t0 = t0;
+      if (t1 > max_t1) max_t1 = t1;
+      uint32_t diff = (uint32_t)(t1 - t0);
+      cycles_sum += diff;
+      if (diff > cycles_max) cycles_max = diff;
+    }
+    std::cout << std::dec;
+    std::cout << "block cycles max: " << cycles_max << std::endl;
+    std::cout << "block cycles total: " << cycles_sum << std::endl;
+    std::cout << "KERNEL_LATENCY: " << (max_t1 - min_t0) << std::endl;
   }
-#endif
 
   // download destination buffer
   std::vector<otype_t> h_C(sizeC);

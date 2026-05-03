@@ -300,6 +300,11 @@ static op_string_t op_string(const Instr &instr) {
         }
       }
       case LsuType::FENCE: return {"FENCE", ""};
+      case LsuType::META_LOAD: {
+        auto lsuArgs = std::get<IntrLsuArgs>(instrArgs);
+        uint32_t col = (lsuArgs.width == 7) ? 1 : 0;
+        return {"LDMETA.c" + std::to_string(col), to_hex_str(lsuArgs.offset)};
+      }
       default:
         std::abort();
       }
@@ -661,8 +666,15 @@ Instr::Ptr Emulator::decode(uint32_t code, uint32_t /*wid*/, uint64_t uuid) {
     instr->set_fu_type(FUType::LSU);
     bool is_float = (op == Opcode::FL || op == Opcode::FS);
     bool is_load = (op == Opcode::L || op == Opcode::FL);
+    // LDMETA: Opcode::FL with funct3 ∈ {6,7} — sparse 2:4 metadata load
+    // that writes both the FP regfile (for scoreboard hazard tracking) and
+    // the TCU per-warp metadata SRAM (replacing META_STORE uops). col_idx
+    // is encoded in funct3 (6→col=0, 7→col=1), leaving imm12 free as a
+    // real address offset so the compiler can use one base register for
+    // both LDMETAs (no per-load addi).
+    bool is_ldmeta = (op == Opcode::FL && (funct3 == 0x6 || funct3 == 0x7));
   #ifdef EXT_V_ENABLE
-    if (is_float && funct3 != 0x2 && funct3 != 0x3) {
+    if (is_float && funct3 != 0x2 && funct3 != 0x3 && !is_ldmeta) {
       IntrVlsArgs instArgs{};
       instArgs.mew = (code >> shift_vmew) & mask_vmew;
       instArgs.vm = (code >> shift_vm) & mask_vm;
@@ -711,8 +723,13 @@ Instr::Ptr Emulator::decode(uint32_t code, uint32_t /*wid*/, uint64_t uuid) {
         instr->set_src_reg(1, rs2, is_float ? RegType::Float : RegType::Integer);
       }
       auto offset = sext(imm12, width_i_imm);
-      instr->set_op_type(is_load ? LsuType::LOAD : LsuType::STORE);
-      instr->set_args(IntrLsuArgs{funct3, is_float, offset, 0});
+      LsuType lsu_op = is_ldmeta ? LsuType::META_LOAD
+                                 : (is_load ? LsuType::LOAD : LsuType::STORE);
+      instr->set_op_type(lsu_op);
+      // For LDMETA: width=funct3 (6 or 7) carries col_idx; offset is a
+      // real signed address offset so the compiler can use a single rs1
+      // base register for multiple LDMETAs.
+      instr->set_args(IntrLsuArgs{funct3, is_float, (uint32_t)offset, 0});
     }
   } break;
   case Opcode::FENCE: {

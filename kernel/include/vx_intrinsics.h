@@ -101,6 +101,32 @@ inline void vx_tmc(int thread_mask) {
     __asm__ volatile (".insn r %0, 0, 0, x0, %1, x0" :: "i"(RISCV_CUSTOM0), "r"(thread_mask) : "memory");
 }
 
+#ifdef TCU_LDMETA_ENABLE
+// LDMETA: sparse 2:4 metadata load. Per-thread address = rs1 + sext(imm12).
+// The LSU response writes both the FP regfile (the returned float — used
+// as a scoreboard hazard anchor for the subsequent WMMA_SP) and the TCU
+// per-warp metadata SRAM directly. col_idx is encoded in funct3 (6 → col=0,
+// 7 → col=1) so imm12 is free as a real signed address offset; the
+// compiler can therefore keep one base register across the two LDMETAs
+// of a K-tile (no addi between them).
+#define vx_ldmeta_c0(addr, off) ({ \
+    float __ldmeta_result; \
+    __asm__ volatile (".insn i 0x07, 6, %0, %c2(%1)" \
+        : "=f"(__ldmeta_result) \
+        : "r"(addr), "i"((off)) \
+        : "memory"); \
+    __ldmeta_result; \
+})
+#define vx_ldmeta_c1(addr, off) ({ \
+    float __ldmeta_result; \
+    __asm__ volatile (".insn i 0x07, 7, %0, %c2(%1)" \
+        : "=f"(__ldmeta_result) \
+        : "r"(addr), "i"((off)) \
+        : "memory"); \
+    __ldmeta_result; \
+})
+#endif
+
 // disable all threads in the current warp
 inline void vx_tmc_zero() {
     __asm__ volatile (".insn r %0, 0, 0, x0, x0, x0" :: "i"(RISCV_CUSTOM0) : "memory");

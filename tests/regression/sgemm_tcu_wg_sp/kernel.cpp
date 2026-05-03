@@ -86,8 +86,7 @@ __kernel void kernel_main(kernel_arg_t* __UNIFORM__ arg) {
     // RS: A + sparse metadata from registers, B from smem (NRC <= 16 only)
     auto meta_sp = smem_base + warp_rank * per_warp_section + smem_a_bytes;
     ctx::fragment_a fragA;
-    ctx::load_matrix_sync(fragA, A_warp, ctx::tileK / 2);
-    ctx::load_sp_metadata(fragA, meta_sp);
+    ctx::load_matrix_sync(fragA, A_warp, ctx::tileK / 2, meta_sp);
     ctx::wgmma_sync(fragC, fragA, desc_b, fragC);
   #else
     // SS: both A and B from smem descriptors

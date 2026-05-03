@@ -291,11 +291,24 @@ public:
     static_assert(Frag::Use == matrix_a, "sparse metadata load is only valid for matrix_a fragment");
 
     auto meta_base = reinterpret_cast<const float*>(meta_sp_ptr);
+#ifdef TCU_LDMETA_ENABLE
+    // LDMETA path: hardware adds (lane_id * 4) to (rs1 + sext(imm12)) per
+    // lane, so the kernel passes the warp-uniform meta_base directly. The
+    // K-loop emits NO `csrr tid / slli / add` for metadata addressing
+    // (saving 3 arith vs the FLW path). col_idx is encoded in funct3 so
+    // both loads share the same base register with compile-time imm12
+    // offsets — no `addi` between them either.
+    frag.data[sparse_regs] = vx_ldmeta_c0(meta_base, 0);
+    if constexpr (sp_num_meta_loads == 2) {
+      frag.data[sparse_regs + 1] = vx_ldmeta_c1(meta_base, NT * (int)sizeof(float));
+    }
+#else
     uint32_t lane_id = vx_thread_id();
     frag.data[sparse_regs] = meta_base[lane_id];
     if constexpr (sp_num_meta_loads == 2) {
       frag.data[sparse_regs + 1] = meta_base[NT + lane_id];
     }
+#endif
   }
 
   template <typename Frag, typename T>
@@ -507,6 +520,17 @@ public:
         }
       });
     }
+  }
+
+  // Sparse-fused overload: loads compressed matrix A and its 2:4 metadata
+  // in one call. Generates the same machine code as calling
+  // load_matrix_sync(dst, src, ldm) followed by load_sp_metadata(dst, meta_ptr).
+  template <mem_layout src_layout = row_major, typename Frag>
+  static __attribute__((always_inline)) void load_matrix_sync(Frag &dst, const void *src, size_t ldm, const void *meta_ptr) {
+    static_assert(is_sparse, "4-arg load_matrix_sync requires sparse configuration");
+    static_assert(Frag::Use == matrix_a, "4-arg load_matrix_sync is only valid for matrix_a fragment");
+    load_matrix_sync<src_layout>(dst, src, ldm);
+    load_sp_metadata(dst, meta_ptr);
   }
 
   template <mem_layout dst_layout = row_major, typename Frag>
@@ -872,6 +896,17 @@ public:
     uint32_t sem_m    = rtl_bank / RTL_HALF_K;
     uint32_t sem_bank = (sem_m < m_steps) ? (sem_m * WG_HALF_K) : 0;
     frag.data[ctx_a::sparse_regs] = meta_base[sem_bank * wg_meta_stride_words + rtl_col];
+  }
+
+  // Sparse-fused overload: loads compressed matrix A and its 2:4 metadata
+  // in one call. Generates the same machine code as calling
+  // load_matrix_sync(dst, src, ldm) followed by load_sp_metadata(dst, meta_ptr).
+  template <mem_layout src_layout = row_major, typename Frag>
+  static __attribute__((always_inline)) void load_matrix_sync(Frag &dst, const void *src, size_t ldm, const void *meta_ptr) {
+    static_assert(is_sparse, "4-arg load_matrix_sync requires sparse configuration");
+    static_assert(Frag::Use == matrix_a, "4-arg load_matrix_sync is only valid for matrix_a fragment");
+    load_matrix_sync<src_layout>(dst, src, ldm);
+    load_sp_metadata(dst, meta_ptr);
   }
 
   // Store accumulator with n-major register layout: r = n * m_steps + m

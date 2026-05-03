@@ -115,6 +115,13 @@ public:
 					const std::vector<reg_data_t>& rs1_data,
 					ExeTraceData* trace_data);
 
+	// LDMETA writeback: lane_data[t] holds the per-lane LSU response for
+	// the col_idx-th metadata load. Writes meta SRAM directly, so the
+	// META_STORE TCU uop sequence can be skipped for sparse WMMA.
+	void ldmeta_writeback(uint32_t wid,
+						  uint32_t col_idx,
+						  const std::vector<reg_data_t>& lane_data);
+
 	const PerfStats& perf_stats() const;
 
 private:
