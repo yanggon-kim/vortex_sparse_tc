@@ -69,6 +69,7 @@ module VX_dispatcher import VX_gpu_pkg::*; #(
                     operands_if.data.rs1_data,
                     operands_if.data.rs2_data,
                     operands_if.data.rs3_data,
+                    operands_if.data.rs4_data,
                     operands_if.data.sop,
                     operands_if.data.eop
                 }),
@@ -129,6 +130,7 @@ module VX_dispatcher import VX_gpu_pkg::*; #(
             eff_rs1_data,
             operands_if.data.rs2_data,
             operands_if.data.rs3_data,
+            operands_if.data.rs4_data,
             operands_if.data.sop,
             operands_if.data.eop
         }),

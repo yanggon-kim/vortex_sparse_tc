@@ -126,6 +126,7 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
   auto rsrc0  = instr.get_src_reg(0);
   auto rsrc1  = instr.get_src_reg(1);
   auto rsrc2  = instr.get_src_reg(2);
+  auto rsrc3  = instr.get_src_reg(3);
 
   auto num_threads = arch_.num_threads();
   auto exec_tmask = instr.has_tmask() ? (warp.tmask & instr.get_tmask()) : warp.tmask;
@@ -141,12 +142,13 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
   trace->PC       = warp.PC;
   trace->tmask    = exec_tmask;
   trace->dst_reg  = rdest;
-  trace->src_regs = {rsrc0, rsrc1, rsrc2};
+  trace->src_regs = {rsrc0, rsrc1, rsrc2, rsrc3};
 
   std::vector<reg_data_t> rd_data(num_threads);
   std::vector<reg_data_t> rs1_data;
   std::vector<reg_data_t> rs2_data;
   std::vector<reg_data_t> rs3_data;
+  std::vector<reg_data_t> rs4_data;
 
   if (instr.is_uop()) {
     DP(1, "Instr: " << instr << ", cid=" << core_->id() << ", wid=" << wid << ", tmask=" << exec_tmask
@@ -160,6 +162,7 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
   if (rsrc0.type != RegType::None) fetch_registers(rs1_data, wid, 0, rsrc0, operand_tmask);
   if (rsrc1.type != RegType::None) fetch_registers(rs2_data, wid, 1, rsrc1, operand_tmask);
   if (rsrc2.type != RegType::None) fetch_registers(rs3_data, wid, 2, rsrc2, operand_tmask);
+  if (rsrc3.type != RegType::None) fetch_registers(rs4_data, wid, 3, rsrc3, operand_tmask);
 
   uint32_t thread_start = 0;
   for (; thread_start < num_threads; ++thread_start) {
@@ -1642,6 +1645,7 @@ instr_trace_t* Emulator::execute(const Instr &instr, uint32_t wid) {
                                    rs1_data,
                                    rs2_data,
                                    rs3_data,
+                                   rs4_data,
                                    rd_data,
                                    trace_data.get(),
                                    tpuArgs.is_sparse);

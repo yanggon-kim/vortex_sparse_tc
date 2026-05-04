@@ -39,6 +39,7 @@ module VX_csr_unit import VX_gpu_pkg::*; #(
     localparam PID_BITS = `CLOG2(`NUM_THREADS / NUM_LANES);
 
     `UNUSED_VAR (execute_if.data.rs3_data)
+    `UNUSED_VAR (execute_if.data.rs4_data)
 
     reg [NUM_LANES-1:0][`XLEN-1:0]  csr_read_data;
     reg  [`XLEN-1:0]                csr_write_data;

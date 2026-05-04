@@ -47,6 +47,7 @@ module VX_lsu_slice import VX_gpu_pkg::*; #(
     ) result_no_rsp_if();
 
     `UNUSED_VAR (execute_if.data.rs3_data)
+    `UNUSED_VAR (execute_if.data.rs4_data)
 
     // full address calculation
 

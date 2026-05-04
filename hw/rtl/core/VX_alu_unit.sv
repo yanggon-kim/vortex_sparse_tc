@@ -57,9 +57,16 @@ module VX_alu_unit import VX_gpu_pkg::*; #(
 
     for (genvar block_idx = 0; block_idx < BLOCK_SIZE; ++block_idx) begin : g_blocks
 
+        // ALU never reads rs4_data (reserved for sparse TCU port-extension).
+        `UNUSED_VAR (per_block_execute_if[block_idx].data.rs4_data)
+
         VX_execute_if #(
             .data_t (alu_execute_t)
         ) pe_execute_if[PE_COUNT]();
+
+        for (genvar pe = 0; pe < PE_COUNT; ++pe) begin : g_pe_unused
+            `UNUSED_VAR (pe_execute_if[pe].data.rs4_data)
+        end
 
         VX_result_if#(
             .data_t (alu_result_t)

@@ -88,6 +88,7 @@ public:
 	          const std::vector<reg_data_t>& rs1_data,
 	          const std::vector<reg_data_t>& rs2_data,
 	          const std::vector<reg_data_t>& rs3_data,
+	          const std::vector<reg_data_t>& rs4_data,
 	          std::vector<reg_data_t>& rd_data,
 	          ExeTraceData* trace_data,
 	          bool is_sparse);

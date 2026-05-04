@@ -133,7 +133,7 @@ public:
   using Ptr = std::shared_ptr<Instr>;
 
   enum {
-    MAX_REG_SOURCES = 3
+    MAX_REG_SOURCES = 4
   };
 
   Instr(uint64_t uuid, FUType fu_type = FUType::ALU)

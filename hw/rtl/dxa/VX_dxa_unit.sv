@@ -27,6 +27,7 @@ module VX_dxa_unit import VX_gpu_pkg::*, VX_dxa_pkg::*; #(
 );
     `UNUSED_SPARAM (INSTANCE_ID)
     `UNUSED_VAR (execute_if.data.rs3_data)
+    `UNUSED_VAR (execute_if.data.rs4_data)
 
     // Wgather-based layout (lane index = thread_id & 3):
     //   Lane 0: rs1=smem_addr, rs2=coord2

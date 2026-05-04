@@ -28,6 +28,7 @@ module VX_alu_muldiv import VX_gpu_pkg::*; #(
 );
     `UNUSED_SPARAM (INSTANCE_ID)
     `UNUSED_VAR (execute_if.data.rs3_data)
+    `UNUSED_VAR (execute_if.data.rs4_data)
 
     localparam TAG_WIDTH = $bits(alu_header_t);
 

@@ -114,11 +114,14 @@ package VX_tcu_pkg;
 `endif
 
     // B micro-tiling (sparse 2:4)
-    // NT=8/32: standard interleaved layout (tcK × tcN × 2 = NT lanes per block)
-    // NT=16 (SYM_SPARSE): WMMA_SP uses column-pair layout (2 cols × tcK × 2 = NT lanes);
-    //   WGMMA_SP needs the full tcK × tcN × 2 candidate lanes (may exceed TCU_BLOCK_CAP).
-    localparam TCU_B_BLOCK_SIZE_SP    = SYM_SPARSE ? TCU_BLOCK_CAP : (TCU_TC_K * TCU_TC_N) * 2;
-    localparam TCU_B_SUB_BLOCKS_SP    = TCU_BLOCK_CAP / TCU_B_BLOCK_SIZE_SP;
+    // All sparse geometries use the standard interleaved layout
+    // (tcK × tcN × 2 candidate lanes per sub-block).
+    // For SYM_SPARSE the lane count exceeds TCU_BLOCK_CAP, so we read two
+    // ports (rs2 + rs4) and treat the concatenation as a 2*BLOCK_CAP wide view.
+    localparam TCU_B_BLOCK_SIZE_SP    = (TCU_TC_K * TCU_TC_N) * 2;
+    localparam TCU_B_WIDE_CAP_SP      = SYM_SPARSE ? (2 * TCU_BLOCK_CAP) : TCU_BLOCK_CAP;
+    localparam TCU_B_SUB_BLOCKS_SP    = (TCU_B_WIDE_CAP_SP > TCU_B_BLOCK_SIZE_SP)
+                                      ? (TCU_B_WIDE_CAP_SP / TCU_B_BLOCK_SIZE_SP) : 1;
     // WGMMA_SP always needs the full candidate lane set, regardless of SYM_SPARSE.
     localparam TCU_WG_B_BLOCK_SIZE_SP = TCU_TC_K * TCU_TC_N * 2;
     // Width of the tbuf_rs2_data port: wider only when SPARSE is enabled (WGMMA_SP path).

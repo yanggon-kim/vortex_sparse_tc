@@ -199,11 +199,24 @@ module VX_tcu_core import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
 
     wire [OFF_W-1:0] a_off = (OFF_W'(step_m) & OFF_W'(TCU_A_SUB_BLOCKS-1)) << LG_A_BS;
 `ifdef TCU_SPARSE_ENABLE
-    wire [OFF_W-1:0] b_off = is_sparse
-        ? (OFF_W'(step_n) & OFF_W'(TCU_B_SUB_BLOCKS_SP-1)) << LG_B_BS_SP
-        : (OFF_W'(step_n) & OFF_W'(TCU_B_SUB_BLOCKS-1)) << LG_B_BS;
+    localparam B_OFF_W_SP = $clog2(TCU_B_WIDE_CAP_SP);
+    wire [OFF_W-1:0] b_off = (OFF_W'(step_n) & OFF_W'(TCU_B_SUB_BLOCKS-1)) << LG_B_BS;
+    wire [B_OFF_W_SP-1:0] b_off_sp = (B_OFF_W_SP'(step_n) & B_OFF_W_SP'(TCU_B_SUB_BLOCKS_SP-1)) << LG_B_BS_SP;
+
+    // Sparse "wide" B view: for SYM_SPARSE the two B candidates per sub-block
+    // exceed TCU_BLOCK_CAP, so we concatenate rs2_data and rs4_data to obtain
+    // a 2 * TCU_BLOCK_CAP-wide view. For non-SYM_SPARSE the wide view is just
+    // rs2_data (rs4_data is unused / tied off by the issue path).
+    wire [TCU_B_WIDE_CAP_SP-1:0][`XLEN-1:0] b_wide_sp;
+    if (SYM_SPARSE) begin : g_b_wide_sym
+        assign b_wide_sp = {execute_if.data.rs4_data, execute_if.data.rs2_data};
+    end else begin : g_b_wide_asym
+        assign b_wide_sp = rs2_data[TCU_BLOCK_CAP-1:0];
+        `UNUSED_VAR (execute_if.data.rs4_data)
+    end
 `else
     wire [OFF_W-1:0] b_off = (OFF_W'(step_n) & OFF_W'(TCU_B_SUB_BLOCKS-1)) << LG_B_BS;
+    `UNUSED_VAR (execute_if.data.rs4_data)
 `endif
 
     // -----------------------------------------------------------------------
@@ -244,9 +257,12 @@ module VX_tcu_core import VX_gpu_pkg::*, VX_tcu_pkg::*; #(
                 assign a_row[k_idx] = 32'(rs1_data[a_off + i * TCU_TC_K + k_idx]);
             `ifdef TCU_SPARSE_ENABLE
                 assign b_col_dense[k_idx] = 32'(rs2_data[b_off + j * TCU_TC_K + k_idx]);
-                localparam J_SP = SYM_SPARSE ? (j % (TCU_TC_N / 2)) : j;
-                assign b_col_1[k_idx] = 32'(rs2_data[b_off + J_SP * TCU_TC_K * 2 + k_idx * 2]);
-                assign b_col_2[k_idx] = 32'(rs2_data[b_off + J_SP * TCU_TC_K * 2 + k_idx * 2 + 1]);
+                // Sparse B candidates come from the wide view (rs2 + rs4 for
+                // SYM_SPARSE; just rs2 otherwise). Drop the legacy column-pair
+                // re-index — port-extended SYM uses the standard interleaved
+                // layout, identical to the asymmetric case.
+                assign b_col_1[k_idx] = 32'(b_wide_sp[b_off_sp + j * TCU_TC_K * 2 + k_idx * 2]);
+                assign b_col_2[k_idx] = 32'(b_wide_sp[b_off_sp + j * TCU_TC_K * 2 + k_idx * 2 + 1]);
             `else
                 assign b_col[k_idx] = 32'(rs2_data[b_off + j * TCU_TC_K + k_idx]);
             `endif

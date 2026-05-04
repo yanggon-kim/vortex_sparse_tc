@@ -42,6 +42,7 @@ package VX_gpu_pkg;
     localparam RV_RS1 = 1;
     localparam RV_RS2 = 2;
     localparam RV_RS3 = 3;
+    localparam RV_RS4 = 4;
 
     localparam REG_TYPE_I = 0;
     localparam REG_TYPE_F = 1;
@@ -113,7 +114,7 @@ package VX_gpu_pkg;
     endfunction
 `endif
 
-    localparam NUM_SRC_OPDS = 3;
+    localparam NUM_SRC_OPDS = 4;
     localparam SRC_OPD_BITS = `CLOG2(NUM_SRC_OPDS);
     localparam SRC_OPD_WIDTH = `UP(SRC_OPD_BITS);
 
@@ -682,6 +683,7 @@ package VX_gpu_pkg;
         logic [NUM_REGS_BITS-1:0]   rs1;
         logic [NUM_REGS_BITS-1:0]   rs2;
         logic [NUM_REGS_BITS-1:0]   rs3;
+        logic [NUM_REGS_BITS-1:0]   rs4;
     } decode_t;
 
     typedef struct packed {
@@ -700,6 +702,7 @@ package VX_gpu_pkg;
         logic [NUM_REGS_BITS-1:0]   rs1;
         logic [NUM_REGS_BITS-1:0]   rs2;
         logic [NUM_REGS_BITS-1:0]   rs3;
+        logic [NUM_REGS_BITS-1:0]   rs4;
         logic                       fu_lock;
         logic                       fu_unlock;
     } ibuffer_t;
@@ -720,6 +723,7 @@ package VX_gpu_pkg;
         logic [NUM_REGS_BITS-1:0]   rs1;
         logic [NUM_REGS_BITS-1:0]   rs2;
         logic [NUM_REGS_BITS-1:0]   rs3;
+        logic [NUM_REGS_BITS-1:0]   rs4;
     } scoreboard_t;
 
     typedef struct packed {
@@ -738,6 +742,7 @@ package VX_gpu_pkg;
         logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs1_data;
         logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs2_data;
         logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs3_data;
+        logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs4_data;
         logic                               sop;
         logic                               eop;
     } operands_t;
@@ -758,6 +763,7 @@ package VX_gpu_pkg;
         logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs1_data;
         logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs2_data;
         logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs3_data;
+        logic [`SIMD_WIDTH-1:0][`XLEN-1:0]  rs4_data;
         logic                               sop;
         logic                               eop;
     } dispatch_t;

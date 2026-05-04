@@ -84,7 +84,7 @@ module VX_opc_unit import VX_gpu_pkg::*; #(
     wire has_collision_st1;
 
     wire [NUM_SRC_OPDS-1:0][NUM_REGS_BITS-1:0] src_regs;
-    assign src_regs = {scoreboard_if.data.rs3, scoreboard_if.data.rs2, scoreboard_if.data.rs1};
+    assign src_regs = {scoreboard_if.data.rs4, scoreboard_if.data.rs3, scoreboard_if.data.rs2, scoreboard_if.data.rs1};
 
     for (genvar i = 0; i < NUM_SRC_OPDS; ++i) begin : g_gpr_rd_reg
         assign req_addr_in[i] = src_regs[i][NUM_REGS_BITS-1 -: REG_REM_BITS];
@@ -326,6 +326,7 @@ module VX_opc_unit import VX_gpu_pkg::*; #(
             operands_if.data.op_args,
             operands_if.data.rd,
             operands_if.data.bytesel,
+            operands_if.data.rs4_data,
             operands_if.data.rs3_data,
             operands_if.data.rs2_data,
             operands_if.data.rs1_data,

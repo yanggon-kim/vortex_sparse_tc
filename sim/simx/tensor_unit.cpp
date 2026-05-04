@@ -716,6 +716,7 @@ public:
             const std::vector<reg_data_t>& rs1_data,
             const std::vector<reg_data_t>& rs2_data,
             const std::vector<reg_data_t>& rs3_data,
+            const std::vector<reg_data_t>& rs4_data,
             std::vector<reg_data_t>& rd_data,
             ExeTraceData* trace_data,
             bool is_sparse) {
@@ -733,9 +734,12 @@ public:
     }
 
     uint32_t a_off = (step_m % cfg::a_sub_blocks) * cfg::a_block_size;
-    uint32_t b_off = is_sparse
-                   ? (step_n % cfg::b_sub_blocks_sp) * cfg::b_block_size_sp
-                   : (step_n % cfg::b_sub_blocks)    * cfg::b_block_size;
+    // For sym sparse port-extended, both B candidates span rs2+rs4 — single
+    // microtile per (rs2,rs4) pair, so b_off=0. For asymmetric sparse, both
+    // candidates fit in rs2; b_off picks the microtile within rs2.
+    uint32_t b_off = (is_sparse && cfg::sym_sparse) ? 0
+                   : is_sparse                      ? (step_n % cfg::b_sub_blocks_sp) * cfg::b_block_size_sp
+                                                    : (step_n % cfg::b_sub_blocks)    * cfg::b_block_size;
 
     // Prepare A tile [tcM][tcK]
     reg_data_t a_tile[cfg::tcM * cfg::tcK];
@@ -755,10 +759,21 @@ public:
       auto meta_bit = [&](uint32_t bit_idx) {
         return (sparse_meta_.at(wid).at(bank * kMaxMetaCols + bit_idx / 32) >> (bit_idx % 32)) & 1u;
       };
+      // Sym sparse port-ext: extended B view is rs2 ++ rs4 (2*NT lanes).
+      // Asymmetric sparse: both candidates already fit in rs2 (NT lanes).
+      std::vector<reg_data_t> b_view_storage;
+      const std::vector<reg_data_t>* b_view = &rs2_data;
+      if (cfg::sym_sparse) {
+        b_view_storage.reserve(rs2_data.size() + rs4_data.size());
+        b_view_storage.insert(b_view_storage.end(), rs2_data.begin(), rs2_data.end());
+        b_view_storage.insert(b_view_storage.end(), rs4_data.begin(), rs4_data.end());
+        b_view = &b_view_storage;
+      }
       for (uint32_t i = 0; i < cfg::tcM; ++i) {
         uint32_t row_base = i * meta_row_width(ebits);
         for (uint32_t j = 0; j < cfg::tcN; ++j) {
-          uint32_t j_sp = cfg::sym_sparse ? (j % (cfg::tcN / 2)) : j;
+          // Sym port-ext: full j range against the wide view (no col-pair re-index).
+          uint32_t j_sp = j;
           for (uint32_t z = 0; z < cfg::tcK; ++z) {
             uint32_t b_idx = b_off + j_sp * cfg::tcK * kCompression + z * kCompression;
             uint32_t lo = 0, hi = 0;
@@ -767,7 +782,7 @@ public:
               hi |= meta_bit(row_base + meta_bits * (cfg::tcK + z) + b) << b;
             }
             b_tile[(i * cfg::tcN + j) * cfg::tcK + z].u32 =
-                gather_sparse(rs2_data.at(b_idx).u32, rs2_data.at(b_idx + 1).u32, lo, hi, ebits);
+                gather_sparse(b_view->at(b_idx).u32, b_view->at(b_idx + 1).u32, lo, hi, ebits);
           }
         }
       }
@@ -1160,9 +1175,8 @@ uint32_t TcuUopGen::uop_count(const Instr& instr) {
     }
     uint32_t mx_meta_stores = is_mx ? mx_meta_words(args.fmt_s) : 0;
     uint32_t k_count = is_sparse ? (wmma::k_steps / 2) : wmma::k_steps;
-    uint32_t mma_steps = (wmma::sym_sparse && is_sparse)
-                       ? (wmma::m_steps * wmma::n_steps * wmma::k_steps)
-                       : (wmma::m_steps * wmma::n_steps * k_count);
+    // Port-extended sym sparse halves k_steps just like asymmetric.
+    uint32_t mma_steps = wmma::m_steps * wmma::n_steps * k_count;
     return sparse_meta_stores + mx_meta_stores + mma_steps;
   }
 
@@ -1247,33 +1261,26 @@ Instr::Ptr TcuUopGen::get(const Instr& macro_instr, uint32_t uop_index) {
       uint32_t k_count = is_sparse ? (wmma::k_steps / 2) : wmma::k_steps;
 
       if (wmma::sym_sparse && is_sparse) {
-        // Symmetric-sparse: flatten (m, n, k) into a single counter
-        constexpr uint32_t lg_n = (wmma::n_steps > 1) ? log2ceil(wmma::n_steps) : 0;
-        constexpr uint32_t lg_k = (wmma::k_steps > 1) ? log2ceil(wmma::k_steps) : 0;
-        constexpr uint32_t step_bits = lg_n + lg_k;
-        constexpr uint32_t step_mask = step_bits ? ((1u << step_bits) - 1) : 0;
-        constexpr uint32_t sym_mask_lo = []() {
-          uint32_t mask = 0;
-          for (uint32_t lane = 0; lane < NUM_THREADS; ++lane)
-            if ((lane % wmma::tcN) < (wmma::tcN / 2)) mask |= (1u << lane);
-          return mask;
-        }();
-        constexpr uint32_t all_lanes = (NUM_THREADS == 32) ? 0xffffffffu : ((1u << NUM_THREADS) - 1);
-
-        uint32_t n_sp = step_bits ? (mma_idx & step_mask) : 0;
-        uint32_t m_sp = mma_idx >> step_bits;
-        // n_sp encodes both actual N step (high bits) and lo/hi half (low lg_k bits).
-        // Extract just the N step for accum indexing; n_sp is still used for B register selection.
-        uint32_t actual_n = lg_k ? (n_sp >> lg_k) : n_sp;
-        uint32_t reg_rs3 = rc_base + (mma_idx >> 1);
+        // Symmetric sparse port-extended: each µop reads two consecutive B regs
+        // (rs2 + rs4) so both 2:4 candidates land at the FEDP simultaneously,
+        // matching the asymmetric speedup of k_steps/2 µops per (m,n).
+        // mma_idx = m * (n_steps * k_count) + n * k_count + k
+        uint32_t mn = wmma::m_steps * wmma::n_steps;
+        uint32_t k = mma_idx / mn;
+        uint32_t rem = mma_idx % mn;
+        uint32_t m = rem / wmma::n_steps;
+        uint32_t n = rem % wmma::n_steps;
+        uint32_t reg_rs1 = ra_base + (m * k_count + k);
+        uint32_t reg_rs2 = rb_base + (n * k_count + k) * 2;
+        uint32_t reg_rs4 = reg_rs2 + 1;
+        uint32_t reg_rs3 = rc_base + (m * wmma::n_steps + n);
         uop_instr->set_op_type(TcuType::WMMA);
-        uop_instr->set_args(IntrTcuArgs{true, 0, 0, fmt_s, fmt_d, m_sp, actual_n, 0, 0});
+        uop_instr->set_args(IntrTcuArgs{true, 0, 0, fmt_s, fmt_d, m, n, k, 0});
         uop_instr->set_dest_reg(reg_rs3, RegType::Float);
-        uop_instr->set_src_reg(0, ra_base + m_sp, RegType::Float);
-        uop_instr->set_src_reg(1, rb_base + n_sp, RegType::Float);
+        uop_instr->set_src_reg(0, reg_rs1, RegType::Float);
+        uop_instr->set_src_reg(1, reg_rs2, RegType::Float);
         uop_instr->set_src_reg(2, reg_rs3, RegType::Float);
-        // Symmetric sparse: no k-loop, always wb=1 and always reads C from RF
-        uop_instr->set_tmask(ThreadMask(NUM_THREADS, (mma_idx & 1) ? (all_lanes & ~sym_mask_lo) : sym_mask_lo));
+        uop_instr->set_src_reg(3, reg_rs4, RegType::Float);
       } else {
         // Standard k-major triple loop (dense or non-sym sparse)
         uint32_t b_sub = is_sparse ? wmma::b_sub_blocks_sp : wmma::b_sub_blocks;
@@ -1435,11 +1442,12 @@ void TensorUnit::wmma(uint32_t wid,
                       const std::vector<reg_data_t>& rs1_data,
                       const std::vector<reg_data_t>& rs2_data,
                       const std::vector<reg_data_t>& rs3_data,
+                      const std::vector<reg_data_t>& rs4_data,
                       std::vector<reg_data_t>& rd_data,
                       ExeTraceData* trace_data,
                       bool is_sparse) {
   impl_->wmma(wid, fmt_s, fmt_d, step_m, step_n, step_k,
-              rs1_data, rs2_data, rs3_data,
+              rs1_data, rs2_data, rs3_data, rs4_data,
               rd_data,
               trace_data,
               is_sparse);
